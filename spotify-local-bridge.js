@@ -1,17 +1,37 @@
 // NAME: Spotify Local Bridge
-// DESCRIPTION: Exposes the Spotify client's playback state to a loopback-only companion.
+// DESCRIPTION: Reads Spotify's PlayerAPI and exposes playback to a loopback-only companion.
 
 (function SpotifyLocalBridge() {
-  if (!window.Spicetify?.Player?.addEventListener || !window.Spicetify.Player.data) {
-    setTimeout(SpotifyLocalBridge, 500);
-    return;
-  }
-
   const endpoint = "http://127.0.0.1:48711/ingest";
   let pending = false;
   let warned = false;
-  let lastAttemptAt = 0;
+  let player = null;
+  let cosmos = null;
+  let registry = null;
   const isrcFallbackCache = new Map();
+
+  function resolve(name) {
+    const token = [...(registry?._map?.keys() ?? [])].find((key) => key?.description === name);
+    return token ? registry.resolve(token) : null;
+  }
+
+  window.__spotifyLocalBridgeStart = (services) => {
+    if (player) return;
+    registry = services;
+    const connect = () => {
+      try {
+        player = resolve("PlayerAPI");
+        cosmos = player?._cosmos ?? resolve("Cosmos");
+        if (!player?._state) player = null;
+      } catch {
+        player = null;
+      }
+      if (!player) setTimeout(connect, 500);
+      else publish();
+    };
+    connect();
+    setInterval(publish, 1000);
+  };
 
   function cleanIsrc(value) {
     if (typeof value !== "string") return null;
@@ -42,18 +62,20 @@
       item?.external_ids?.isrc].map(cleanIsrc).find(Boolean);
     if (direct) return direct;
     if (Array.isArray(item?.external_id)) {
-      const external = item.external_id.map((entry) => cleanIsrc(entry?.id || entry?.value)).find(Boolean);
+      const external = item.external_id.filter((entry) => entry?.type === "isrc")
+        .map((entry) => cleanIsrc(entry.id || entry.value)).find(Boolean);
       if (external) return external;
     }
     const embedded = findIsrc(meta) || findIsrc(item);
     if (embedded) return embedded;
     const trackId = typeof item?.uri === "string" ? item.uri.split(":").pop() : null;
-    if (!trackId || !Spicetify.CosmosAsync?.get) return null;
+    cosmos ??= player?._cosmos ?? resolve("Cosmos");
+    if (!trackId || !cosmos?.get) return null;
     if (isrcFallbackCache.has(trackId)) return isrcFallbackCache.get(trackId);
     const lookup = (async () => {
       try {
         const metadata = await Promise.race([
-          Spicetify.CosmosAsync.get(`sp://metadata/track/${trackId}`),
+          cosmos.get(`sp://metadata/track/${trackId}`),
           new Promise((_, reject) => setTimeout(() => reject(new Error("Cosmos timeout")), 1500)),
         ]);
         return findIsrc(metadata);
@@ -66,21 +88,14 @@
   }
 
   async function snapshot() {
-    const player = Spicetify.Player;
-    const state = player.data;
+    const state = player._state;
     const item = state?.item;
     const meta = item?.metadata ?? {};
     const isrc = await getTrackIsrc(item, meta);
     const artists = item?.artists?.filter((artist) => artist.name) ?? [];
     const duration = Number(state?.duration ?? item?.duration?.milliseconds ?? meta.duration) || 0;
-    let progress = 0;
-    if (item) {
-      try {
-        progress = Number(player.getProgress()) || 0;
-      } catch {
-        progress = Number(state?.positionAsOfTimestamp) || 0;
-      }
-    }
+    const progress = item ? (Number(state.positionAsOfTimestamp) || 0)
+      + (state.isPaused ? 0 : Math.max(0, Date.now() - (Number(state.timestamp) || Date.now()))) : 0;
 
     return {
       track_uri: item?.uri ?? null,
@@ -105,9 +120,8 @@
   }
 
   async function publish() {
-    if (pending) return;
+    if (pending || !player?._state) return;
     pending = true;
-    lastAttemptAt = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2500);
     try {
@@ -128,11 +142,4 @@
     }
   }
 
-  Spicetify.Player.addEventListener("songchange", publish);
-  Spicetify.Player.addEventListener("onplaypause", publish);
-  Spicetify.Player.addEventListener("onprogress", () => {
-    if (Date.now() - lastAttemptAt >= 1000) publish();
-  });
-  setInterval(publish, 1000);
-  publish();
 })();

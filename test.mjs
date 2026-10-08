@@ -6,9 +6,8 @@ import { createBridgeServer } from "./bridge.mjs";
 
 const extension = await readFile(new URL("./spotify-local-bridge.js", import.meta.url), "utf8");
 const messages = [];
-const listeners = new Map();
 const player = {
-  data: {
+  _state: {
     item: {
       uri: "spotify:track:0BxE4FqsDD1Ot4YuBXwAPp",
       name: "505",
@@ -19,36 +18,62 @@ const player = {
     },
     duration: 253000,
     isPaused: false,
+    timestamp: Date.now(),
+    positionAsOfTimestamp: 5000,
     context: { uri: "spotify:album:abc" },
     shuffle: false,
     repeat: 0,
   },
-  getProgress: () => 5000,
-  addEventListener: (name, callback) => listeners.set(name, callback),
 };
+let cosmosCalls = 0;
+let tick;
+const cosmos = { get: async () => {
+  cosmosCalls++;
+  return { external_id: [{ type: "isrc", id: "US-UM7-17-03861" }] };
+} };
+const registry = {
+  _map: new Map([[Symbol.for("PlayerAPI"), player]]),
+  resolve(token) { return this._map.get(token); },
+};
+const window = {};
 vm.runInNewContext(extension, {
-  window: { Spicetify: { Player: player } },
+  window,
   AbortController,
   setTimeout,
   clearTimeout,
-  setInterval: () => {},
+  setInterval: (callback) => { tick = callback; },
   fetch: async (_url, options) => {
     messages.push(JSON.parse(options.body));
     return { ok: true };
   },
   console,
-  Spicetify: { Player: player, CosmosAsync: { get: async () => ({ external_id: [{ type: "isrc", id: "US-UM7-17-03861" }] }) } },
 });
+window.__spotifyLocalBridgeStart(registry);
 await new Promise((resolve) => setImmediate(resolve));
-assert.equal(messages[0].track_uri, player.data.item.uri);
-assert.equal(messages[0].progress_ms, 5000);
+assert.equal(messages[0].track_uri, player._state.item.uri);
+assert.ok(messages[0].progress_ms >= 5000 && messages[0].progress_ms < 5100);
 assert.equal(messages[0].is_playing, true);
-assert.equal(messages[0].artist_uris[0], player.data.item.artists[0].uri);
-assert.equal(messages[0].album_uri, player.data.item.album.uri);
-assert.equal(messages[0].isrc, "USUM71703861");
+assert.equal(messages[0].artist_uris[0], player._state.item.artists[0].uri);
+assert.equal(messages[0].album_uri, player._state.item.album.uri);
+assert.equal(messages[0].isrc, null);
 assert.equal(messages[0].image_url, "spotify:image:abc");
-assert.ok(listeners.has("songchange"));
-assert.ok(listeners.has("onprogress"));
+registry._map.set(Symbol.for("Cosmos"), cosmos);
+tick();
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).isrc, "USUM71703861");
+player._state.isPaused = true;
+player._state.positionAsOfTimestamp = 9000;
+tick();
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).progress_ms, 9000);
+assert.equal(messages.at(-1).is_playing, false);
+player._state.isPaused = false;
+player._state.positionAsOfTimestamp = 2000;
+player._state.timestamp = Date.now();
+tick();
+await new Promise((resolve) => setImmediate(resolve));
+assert.ok(messages.at(-1).progress_ms >= 2000 && messages.at(-1).progress_ms < 2100);
+assert.equal(cosmosCalls, 1);
 
 const server = createBridgeServer();
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
