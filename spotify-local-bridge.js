@@ -4,6 +4,7 @@
 (function SpotifyLocalBridge() {
   const endpoint = "http://127.0.0.1:48711/ingest";
   const commandsEndpoint = "http://127.0.0.1:48711/commands";
+  const controlResultEndpoint = "http://127.0.0.1:48711/control-result";
   let pending = false;
   let commandsPending = false;
   let warned = false;
@@ -49,9 +50,11 @@
   async function pollCommands() {
     if (!player || commandsPending) return;
     commandsPending = true;
+    let longPoll = false;
     try {
       const response = await fetch(commandsEndpoint, { cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      longPoll = response.headers?.get?.("X-Spotify-Local-Bridge-Long-Poll") === "1";
       const commands = await response.json();
       for (const command of commands) await executeCommand(command);
     } catch (error) {
@@ -59,24 +62,45 @@
       warned = true;
     } finally {
       commandsPending = false;
+      if (longPoll) pollCommands();
     }
   }
 
   async function executeCommand(command) {
     if (!command || typeof command.name !== "string") return;
+    let action;
+    let args = [];
     switch (command.name) {
-      case "pause": return player.pause?.();
-      case "resume": return player.resume?.();
-      case "next": return player.skipToNext?.() ?? player.nextTrack?.() ?? player.skipNext?.();
-      case "previous": return player.skipToPrevious?.() ?? player.previousTrack?.() ?? player.skipPrevious?.();
+      case "pause": action = player.pause; break;
+      case "resume": action = player.resume; break;
+      case "next": action = player.skipToNext ?? player.nextTrack ?? player.skipNext; break;
+      case "previous": action = player.skipToPrevious ?? player.previousTrack ?? player.skipPrevious; break;
       case "seek": {
         const position = Number(command.value);
-        if (Number.isFinite(position) && position >= 0)
-          return player.seekTo?.(position) ?? player.seek?.(position);
-        return;
+        if (!Number.isFinite(position) || position < 0) return reportControl(command.name, false, "invalid position");
+        action = player.seekTo ?? player.seek;
+        args = [position];
+        break;
       }
       default: return;
     }
+    if (typeof action !== "function") return reportControl(command.name, false, "PlayerAPI method not found");
+    try {
+      await action.apply(player, args);
+      await reportControl(command.name, true);
+    } catch (error) {
+      await reportControl(command.name, false, error?.message ?? String(error));
+    }
+  }
+
+  async function reportControl(name, success, error = null) {
+    try {
+      await fetch(controlResultEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, success, error }),
+      });
+    } catch { }
   }
 
   function cleanIsrc(value) {
@@ -85,9 +109,28 @@
     return /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(cleaned) ? cleaned : null;
   }
 
-  function findIsrc(value, depth = 0) {
-    if (!value || depth > 8 || typeof value !== "object") return null;
-    for (const [key, child] of Object.entries(value)) {
+  function findIsrc(value, depth = 0, seen = new Set()) {
+    if (!value || depth > 10 || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return null;
+    seen.add(value);
+
+    try {
+      if (typeof value.toJSON === "function") {
+        const json = value.toJSON();
+        const fromJson = findIsrc(json, depth + 1, seen);
+        if (fromJson) return fromJson;
+      }
+    } catch { }
+
+    const keys = new Set(Object.keys(value));
+    try {
+      for (const key of Object.getOwnPropertyNames(value)) keys.add(key);
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype) for (const key of Object.getOwnPropertyNames(prototype)) keys.add(key);
+    } catch { }
+
+    for (const key of keys) {
+      let child;
+      try { child = value[key]; } catch { continue; }
       const direct = /isrc/i.test(key) ? cleanIsrc(child) : null;
       if (direct) return direct;
       if (child && typeof child === "object") {
@@ -96,7 +139,7 @@
           const nestedDirect = cleanIsrc(record.id) || cleanIsrc(record.value);
           if (nestedDirect) return nestedDirect;
         }
-        const nested = findIsrc(child, depth + 1);
+        const nested = findIsrc(child, depth + 1, seen);
         if (nested) return nested;
       }
     }

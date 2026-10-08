@@ -60,7 +60,9 @@ try {
     if (-not $enqueue.Invoke($null, @('seek', [Nullable[int]]::new(12000)))) { throw 'Command was not queued.' }
     $foreignCommands = Invoke-WebRequest "$base/commands" -Headers @{ Origin = 'https://example.com' } -SkipHttpErrorCheck
     if ($foreignCommands.StatusCode -ne 403) { throw 'Foreign origin read commands.' }
-    $commands = (Invoke-WebRequest "$base/commands" -Headers @{ Origin = $origin }).Content | ConvertFrom-Json
+    $commandsJson = (Invoke-WebRequest "$base/commands" -Headers @{ Origin = $origin }).Content
+    if ($commandsJson -notmatch '"name"\s*:\s*"seek"' -or $commandsJson -notmatch '"value"\s*:\s*12000') { throw 'Command JSON did not use XPUI field names.' }
+    $commands = $commandsJson | ConvertFrom-Json
     if ($commands.Count -ne 1 -or $commands[0].name -ne 'seek' -or $commands[0].value -ne 12000) { throw 'Queued command was not returned.' }
     $current = (Invoke-WebRequest "$base/state").Content | ConvertFrom-Json
     if ($current.track_uri -ne $state.track_uri -or $current.isrc -ne $state.isrc -or

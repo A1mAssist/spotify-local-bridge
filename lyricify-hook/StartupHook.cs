@@ -64,6 +64,7 @@ internal static class PlaybackPatch
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SkipNext), 1);
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SkipPrevious), 1);
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SeekTo), 2);
+        PatchMediaSessionControls(harmony);
         StartupHook.Log("PATCHED playback reads and controls (2 reads, 5 controls)");
     }
 
@@ -74,6 +75,31 @@ internal static class PlaybackPatch
         if (method == null) throw new InvalidOperationException($"Expected {name} overload with {parameterCount} parameters");
         harmony.Patch(method, prefix: prefix);
         StartupHook.Log($"PATCHED {name} control");
+    }
+
+    private static void PatchMediaSessionControls(Harmony harmony)
+    {
+        var type = AppDomain.CurrentDomain.GetAssemblies()
+            .Select(assembly => assembly.GetType("Lyricify_for_Spotify.Helpers.MediaSession.MediaSessionHelper", throwOnError: false))
+            .FirstOrDefault(candidate => candidate != null);
+        if (type == null)
+        {
+            StartupHook.Log("MEDIA SESSION TYPE NOT FOUND");
+            return;
+        }
+
+        foreach (var name in new[] { "PausePlayback", "ResumePlayback", "SkipPrevious", "SkipNext", "SeekTo" })
+        {
+            var method = type.GetMethod(name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            if (method == null)
+            {
+                StartupHook.Log($"MEDIA SESSION CONTROL NOT FOUND {name}");
+                continue;
+            }
+            var prefix = new HarmonyMethod(typeof(PlaybackPatch).GetMethod(nameof(MediaSessionControlPrefix), BindingFlags.NonPublic | BindingFlags.Static));
+            harmony.Patch(method, prefix: prefix);
+            StartupHook.Log($"PATCHED MediaSessionHelper.{name} fallback");
+        }
     }
 
     private static bool Prefix(ref Task<CurrentlyPlayingContext> __result)
@@ -100,9 +126,23 @@ internal static class PlaybackPatch
         }
 
         int? value = command == "seek" ? ReadPosition(__args) : null;
-        __result = command == "seek" && !value.HasValue
-            ? Task.FromResult(false)
-            : LocalBridgeServer.EnqueueCommand(command, value);
+        if (command == "seek" && !value.HasValue)
+        {
+            StartupHook.Log("CONTROL REJECT seek (missing position)");
+            __result = Task.FromResult(false);
+            return false;
+        }
+
+        var accepted = LocalBridgeServer.EnqueueCommand(command, value).GetAwaiter().GetResult();
+        StartupHook.Log($"CONTROL {command}{(value.HasValue ? $" {value.Value}" : "")} queued={accepted}");
+        __result = Task.FromResult(accepted);
+        return false;
+    }
+
+    private static bool MediaSessionControlPrefix(MethodBase __originalMethod, ref Task<bool> __result)
+    {
+        StartupHook.Log($"MEDIA SESSION BYPASS {__originalMethod.Name}");
+        __result = Task.FromResult(false);
         return false;
     }
 

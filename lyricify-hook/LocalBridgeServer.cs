@@ -2,6 +2,7 @@ using System.Net;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 internal sealed record BridgeSnapshot(BridgeState State, long UpdatedAt)
@@ -11,7 +12,9 @@ internal sealed record BridgeSnapshot(BridgeState State, long UpdatedAt)
         : State.ProgressMs;
 }
 
-internal sealed record BridgeCommand(string Name, int? Value);
+internal sealed record BridgeCommand(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("value")] int? Value);
 
 internal static class LocalBridgeServer
 {
@@ -20,9 +23,11 @@ internal static class LocalBridgeServer
     // ponytail: XPUI background timers can slip to one update per minute; use an unthrottled signal if that exceeds 90 seconds.
     private const int MaxAgeMs = 90_000;
     private const string SpotifyOrigin = "https://xpui.app.spotify.com";
+    private const string ControlResultPath = "/control-result";
     private static HttpListener? listener;
     private static BridgeSnapshot? current;
     private static readonly ConcurrentQueue<BridgeCommand> commands = new();
+    private static readonly SemaphoreSlim commandSignal = new(0);
 
     internal static void Start(int port = 48711)
     {
@@ -45,12 +50,14 @@ internal static class LocalBridgeServer
         Interlocked.Exchange(ref listener, null)?.Close();
         Volatile.Write(ref current, null);
         while (commands.TryDequeue(out _)) { }
+        while (commandSignal.Wait(0)) { }
     }
 
     internal static Task<bool> EnqueueCommand(string name, int? value = null)
     {
         if (commands.Count >= MaxCommands) return Task.FromResult(false);
         commands.Enqueue(new BridgeCommand(name, value));
+        commandSignal.Release();
         return Task.FromResult(true);
     }
 
@@ -58,7 +65,10 @@ internal static class LocalBridgeServer
     {
         var result = new List<BridgeCommand>(MaxCommands);
         while (result.Count < MaxCommands && commands.TryDequeue(out var command))
+        {
             result.Add(command);
+            commandSignal.Wait(0);
+        }
         return result.ToArray();
     }
 
@@ -109,10 +119,11 @@ internal static class LocalBridgeServer
                 response.Headers["Vary"] = "Origin";
                 response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
                 response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
+                response.Headers["Access-Control-Expose-Headers"] = "X-Spotify-Local-Bridge-Long-Poll";
                 response.Headers["Access-Control-Allow-Private-Network"] = "true";
             }
 
-            if (request.Url?.AbsolutePath == "/ingest" && request.HttpMethod == "OPTIONS")
+            if ((request.Url?.AbsolutePath == "/ingest" || request.Url?.AbsolutePath == ControlResultPath) && request.HttpMethod == "OPTIONS")
             {
                 response.StatusCode = origin == SpotifyOrigin ? 204 : 403;
                 return;
@@ -162,7 +173,31 @@ internal static class LocalBridgeServer
                     return;
                 }
                 response.ContentType = "application/json; charset=utf-8";
-                await JsonSerializer.SerializeAsync(response.OutputStream, TakeCommands()).ConfigureAwait(false);
+                var pending = TakeCommands();
+                if (pending.Length == 0)
+                {
+                    response.Headers["X-Spotify-Local-Bridge-Long-Poll"] = "1";
+                    await commandSignal.WaitAsync(TimeSpan.FromSeconds(25)).ConfigureAwait(false);
+                    pending = TakeCommands();
+                }
+                if (pending.Length > 0) StartupHook.Log($"COMMAND POLL {pending.Length}");
+                await JsonSerializer.SerializeAsync(response.OutputStream, pending).ConfigureAwait(false);
+                return;
+            }
+            if (request.Url?.AbsolutePath == ControlResultPath && request.HttpMethod == "POST")
+            {
+                if (origin != SpotifyOrigin || request.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) != true)
+                {
+                    response.StatusCode = 403;
+                    return;
+                }
+                using var document = await JsonDocument.ParseAsync(request.InputStream).ConfigureAwait(false);
+                var root = document.RootElement;
+                var name = root.TryGetProperty("name", out var nameValue) ? nameValue.GetString() : null;
+                var success = root.TryGetProperty("success", out var successValue) && successValue.GetBoolean();
+                var error = root.TryGetProperty("error", out var errorValue) ? errorValue.GetString() : null;
+                StartupHook.Log($"CONTROL RESULT {name ?? "?"} success={success}{(string.IsNullOrWhiteSpace(error) ? "" : $" error={error}")}");
+                response.StatusCode = 204;
                 return;
             }
             if (request.Url?.AbsolutePath == "/state" && request.HttpMethod == "GET")

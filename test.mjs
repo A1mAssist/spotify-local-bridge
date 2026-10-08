@@ -42,7 +42,10 @@ player.skipToPrevious = async () => actions.push("previous");
 player.seekTo = async (position) => actions.push(`seek:${position}`);
 const cosmos = { get: async () => {
   cosmosCalls++;
-  return { external_id: [{ type: "isrc", id: "US-UM7-17-03861" }] };
+  const metadata = Object.create({
+    get external_id() { return [{ type: "isrc", id: "US-UM7-17-03861" }]; },
+  });
+  return metadata;
 } };
 const registry = {
   _map: new Map([[Symbol.for("PlayerAPI"), player]]),
@@ -57,6 +60,7 @@ vm.runInNewContext(extension, {
   setInterval: (callback, delay) => { if (delay === 100) commandTick = callback; else tick = callback; },
   fetch: async (_url, options = {}) => {
     if ((options.method ?? "GET") === "GET") return { ok: true, json: async () => commandQueue.splice(0) };
+    if (_url.endsWith("/control-result")) return { ok: true };
     messages.push(JSON.parse(options.body));
     if (holdFetch) {
       holdFetch = false;
