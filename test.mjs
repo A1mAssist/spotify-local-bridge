@@ -25,13 +25,21 @@ const player = {
 };
 let cosmosCalls = 0;
 let tick;
+let commandTick;
 let update;
+const actions = [];
+const commandQueue = [];
 let holdFetch = false;
 let releaseFetch;
 player._events = { addListener(name, callback) {
   assert.equal(name, "update");
   update = callback;
 } };
+player.pause = async () => actions.push("pause");
+player.resume = async () => actions.push("resume");
+player.nextTrack = async () => actions.push("next");
+player.previousTrack = async () => actions.push("previous");
+player.seek = async (position) => actions.push(`seek:${position}`);
 const cosmos = { get: async () => {
   cosmosCalls++;
   return { external_id: [{ type: "isrc", id: "US-UM7-17-03861" }] };
@@ -46,8 +54,9 @@ vm.runInNewContext(extension, {
   AbortController,
   setTimeout,
   clearTimeout,
-  setInterval: (callback) => { tick = callback; },
-  fetch: async (_url, options) => {
+  setInterval: (callback, delay) => { if (delay === 100) commandTick = callback; else tick = callback; },
+  fetch: async (_url, options = {}) => {
+    if ((options.method ?? "GET") === "GET") return { ok: true, json: async () => commandQueue.splice(0) };
     messages.push(JSON.parse(options.body));
     if (holdFetch) {
       holdFetch = false;
@@ -66,6 +75,15 @@ assert.equal(messages[0].artist_uris[0], player._state.item.artists[0].uri);
 assert.equal(messages[0].album_uri, player._state.item.album.uri);
 assert.equal(messages[0].isrc, null);
 assert.equal(messages[0].image_url, "spotify:image:abc");
+commandQueue.push(
+  { name: "pause" },
+  { name: "resume" },
+  { name: "next" },
+  { name: "previous" },
+  { name: "seek", value: 12000 },
+);
+await commandTick();
+assert.deepEqual(actions, ["pause", "resume", "next", "previous", "seek:12000"]);
 registry._map.set(Symbol.for("Cosmos"), cosmos);
 tick();
 await new Promise((resolve) => setImmediate(resolve));

@@ -1,9 +1,12 @@
-param([string]$SpotifyApiDll)
+param(
+    [string]$SpotifyApiDll,
+    [string]$HookPath = (Join-Path $PSScriptRoot 'bin/Release/net6.0/StartupHook.dll')
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$hookPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'bin/Release/net6.0/StartupHook.dll')).Path
+$hookPath = (Resolve-Path -LiteralPath $HookPath).Path
 if ($SpotifyApiDll) {
     $sdkPath = (Resolve-Path -LiteralPath $SpotifyApiDll).Path
     [System.Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath($sdkPath) | Out-Null
@@ -53,6 +56,12 @@ try {
     if ((Post-State $invalid).StatusCode -ne 413) { throw 'Oversized state was accepted.' }
     $state.isrc = 'USUM71703861'
     if ((Post-State $state).StatusCode -ne 204) { throw 'Valid state was rejected.' }
+    $enqueue = $server.GetMethod('EnqueueCommand', $flags)
+    if (-not $enqueue.Invoke($null, @('seek', [Nullable[int]]::new(12000)))) { throw 'Command was not queued.' }
+    $foreignCommands = Invoke-WebRequest "$base/commands" -Headers @{ Origin = 'https://example.com' } -SkipHttpErrorCheck
+    if ($foreignCommands.StatusCode -ne 403) { throw 'Foreign origin read commands.' }
+    $commands = (Invoke-WebRequest "$base/commands" -Headers @{ Origin = $origin }).Content | ConvertFrom-Json
+    if ($commands.Count -ne 1 -or $commands[0].name -ne 'seek' -or $commands[0].value -ne 12000) { throw 'Queued command was not returned.' }
     $current = (Invoke-WebRequest "$base/state").Content | ConvertFrom-Json
     if ($current.track_uri -ne $state.track_uri -or $current.isrc -ne $state.isrc -or
         $current.progress_ms -lt 5000 -or $current.updated_at_ms -le 0) { throw 'Stored state is incorrect.' }

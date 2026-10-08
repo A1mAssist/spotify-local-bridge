@@ -1,4 +1,5 @@
 using System.Net;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -10,14 +11,18 @@ internal sealed record BridgeSnapshot(BridgeState State, long UpdatedAt)
         : State.ProgressMs;
 }
 
+internal sealed record BridgeCommand(string Name, int? Value);
+
 internal static class LocalBridgeServer
 {
     private const int MaxBody = 16 * 1024;
+    private const int MaxCommands = 32;
     // ponytail: XPUI background timers can slip to one update per minute; use an unthrottled signal if that exceeds 90 seconds.
     private const int MaxAgeMs = 90_000;
     private const string SpotifyOrigin = "https://xpui.app.spotify.com";
     private static HttpListener? listener;
     private static BridgeSnapshot? current;
+    private static readonly ConcurrentQueue<BridgeCommand> commands = new();
 
     internal static void Start(int port = 48711)
     {
@@ -39,6 +44,22 @@ internal static class LocalBridgeServer
     {
         Interlocked.Exchange(ref listener, null)?.Close();
         Volatile.Write(ref current, null);
+        while (commands.TryDequeue(out _)) { }
+    }
+
+    internal static Task<bool> EnqueueCommand(string name, int? value = null)
+    {
+        if (commands.Count >= MaxCommands) return Task.FromResult(false);
+        commands.Enqueue(new BridgeCommand(name, value));
+        return Task.FromResult(true);
+    }
+
+    private static BridgeCommand[] TakeCommands()
+    {
+        var result = new List<BridgeCommand>(MaxCommands);
+        while (result.Count < MaxCommands && commands.TryDequeue(out var command))
+            result.Add(command);
+        return result.ToArray();
     }
 
     internal static BridgeSnapshot? Read()
@@ -86,7 +107,7 @@ internal static class LocalBridgeServer
             {
                 response.Headers["Access-Control-Allow-Origin"] = SpotifyOrigin;
                 response.Headers["Vary"] = "Origin";
-                response.Headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
+                response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
                 response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
                 response.Headers["Access-Control-Allow-Private-Network"] = "true";
             }
@@ -131,6 +152,17 @@ internal static class LocalBridgeServer
                 }
                 Volatile.Write(ref current, new BridgeSnapshot(state!, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
                 response.StatusCode = 204;
+                return;
+            }
+            if (request.Url?.AbsolutePath == "/commands" && request.HttpMethod == "GET")
+            {
+                if (origin != SpotifyOrigin)
+                {
+                    response.StatusCode = 403;
+                    return;
+                }
+                response.ContentType = "application/json; charset=utf-8";
+                await JsonSerializer.SerializeAsync(response.OutputStream, TakeCommands()).ConfigureAwait(false);
                 return;
             }
             if (request.Url?.AbsolutePath == "/state" && request.HttpMethod == "GET")

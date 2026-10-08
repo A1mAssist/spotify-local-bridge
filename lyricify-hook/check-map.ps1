@@ -1,13 +1,14 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$SpotifyApiDll
+    [string]$SpotifyApiDll,
+    [string]$HookPath = (Join-Path $PSScriptRoot 'bin/Release/net6.0/StartupHook.dll')
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $sdkPath = (Resolve-Path -LiteralPath $SpotifyApiDll).Path
-$hookPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'bin/Release/net6.0/StartupHook.dll')).Path
+$hookPath = (Resolve-Path -LiteralPath $HookPath).Path
 [System.Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath($sdkPath) | Out-Null
 $hook = [System.Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath($hookPath)
 $stateType = $hook.GetType('BridgeState', $true)

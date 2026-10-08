@@ -58,13 +58,68 @@ internal static class PlaybackPatch
             .Where(method => method.Name == nameof(PlayerClient.GetCurrentPlayback)).ToArray();
         if (methods.Length != 2) throw new InvalidOperationException($"Expected 2 playback overloads; found {methods.Length}");
         foreach (var method in methods) harmony.Patch(method, prefix: prefix);
-        StartupHook.Log("PATCHED PlayerClient.GetCurrentPlayback (2 overloads)");
+        var controlPrefix = new HarmonyMethod(typeof(PlaybackPatch).GetMethod(nameof(ControlPrefix), BindingFlags.NonPublic | BindingFlags.Static));
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.PausePlayback), 1);
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.ResumePlayback), 1);
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.SkipNext), 1);
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.SkipPrevious), 1);
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.SeekTo), 2);
+        StartupHook.Log("PATCHED playback reads and controls (2 reads, 5 controls)");
+    }
+
+    private static void PatchControl(Harmony harmony, HarmonyMethod prefix, string name, int parameterCount)
+    {
+        var method = typeof(PlayerClient).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .SingleOrDefault(candidate => candidate.Name == name && candidate.GetParameters().Length == parameterCount);
+        if (method == null) throw new InvalidOperationException($"Expected {name} overload with {parameterCount} parameters");
+        harmony.Patch(method, prefix: prefix);
+        StartupHook.Log($"PATCHED {name} control");
     }
 
     private static bool Prefix(ref Task<CurrentlyPlayingContext> __result)
     {
         __result = ReadLocalPlayback();
         return false;
+    }
+
+    private static bool ControlPrefix(MethodBase __originalMethod, object[] __args, ref Task<bool> __result)
+    {
+        var command = __originalMethod.Name switch
+        {
+            nameof(PlayerClient.PausePlayback) => "pause",
+            nameof(PlayerClient.ResumePlayback) => "resume",
+            nameof(PlayerClient.SkipNext) => "next",
+            nameof(PlayerClient.SkipPrevious) => "previous",
+            nameof(PlayerClient.SeekTo) => "seek",
+            _ => null
+        };
+        if (command == null)
+        {
+            __result = Task.FromResult(false);
+            return false;
+        }
+
+        int? value = command == "seek" ? ReadPosition(__args) : null;
+        __result = command == "seek" && !value.HasValue
+            ? Task.FromResult(false)
+            : LocalBridgeServer.EnqueueCommand(command, value);
+        return false;
+    }
+
+    private static int? ReadPosition(object[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg == null) continue;
+            foreach (var propertyName in new[] { "Position", "PositionMs" })
+            {
+                var property = arg.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                var value = property?.GetValue(arg);
+                if (value is long position && position >= 0 && position <= int.MaxValue) return (int)position;
+                if (value is int positionInt && positionInt >= 0) return positionInt;
+            }
+        }
+        return null;
     }
 
     private static Task<CurrentlyPlayingContext> ReadLocalPlayback()

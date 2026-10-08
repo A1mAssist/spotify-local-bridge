@@ -3,7 +3,9 @@
 
 (function SpotifyLocalBridge() {
   const endpoint = "http://127.0.0.1:48711/ingest";
+  const commandsEndpoint = "http://127.0.0.1:48711/commands";
   let pending = false;
+  let commandsPending = false;
   let warned = false;
   let player = null;
   let cosmos = null;
@@ -36,11 +38,45 @@
           publish();
         });
         publish();
+        pollCommands();
       }
     };
     connect();
     setInterval(publish, 1000);
+    setInterval(pollCommands, 100);
   };
+
+  async function pollCommands() {
+    if (!player || commandsPending) return;
+    commandsPending = true;
+    try {
+      const response = await fetch(commandsEndpoint, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const commands = await response.json();
+      for (const command of commands) await executeCommand(command);
+    } catch (error) {
+      if (!warned) console.warn("Spotify Local Bridge is waiting for its local server:", error);
+      warned = true;
+    } finally {
+      commandsPending = false;
+    }
+  }
+
+  async function executeCommand(command) {
+    if (!command || typeof command.name !== "string") return;
+    switch (command.name) {
+      case "pause": return player.pause?.();
+      case "resume": return player.resume?.();
+      case "next": return player.nextTrack?.() ?? player.skipNext?.();
+      case "previous": return player.previousTrack?.() ?? player.skipPrevious?.();
+      case "seek": {
+        const position = Number(command.value);
+        if (Number.isFinite(position) && position >= 0) return player.seek?.(position);
+        return;
+      }
+      default: return;
+    }
+  }
 
   function cleanIsrc(value) {
     if (typeof value !== "string") return null;
