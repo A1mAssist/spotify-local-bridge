@@ -9,6 +9,7 @@
   let commandsPending = false;
   let warned = false;
   let player = null;
+  let library = null;
   let cosmos = null;
   let registry = null;
   let latestState = null;
@@ -68,6 +69,26 @@
 
   async function executeCommand(command) {
     if (!command || typeof command.name !== "string") return;
+    if (command.name === "library-check" || command.name === "library-add" || command.name === "library-remove") {
+      library ??= resolve("LibraryAPI");
+      const uris = Array.isArray(command.uris) ? command.uris.filter((uri) => typeof uri === "string") : [];
+      if (!library || uris.length !== command.uris?.length || uris.length === 0)
+        return reportControl(command.name, false, "LibraryAPI method not found or invalid URIs", command.id);
+      try {
+        if (command.name === "library-check") {
+          const values = await library.contains(...uris);
+          await reportControl(command.name, true, null, command.id, Array.isArray(values) ? values.map(Boolean) : null);
+        } else {
+          const method = command.name === "library-add" ? library.add : library.remove;
+          if (typeof method !== "function") throw new Error("LibraryAPI mutation method not found");
+          await method.call(library, { uris });
+          await reportControl(command.name, true, null, command.id);
+        }
+      } catch (error) {
+        await reportControl(command.name, false, error?.message ?? String(error), command.id);
+      }
+      return;
+    }
     let action;
     let args = [];
     switch (command.name) {
@@ -82,23 +103,31 @@
         args = [position];
         break;
       }
+      case "shuffle":
+        action = player.setShuffle;
+        args = [Number(command.value) === 1];
+        break;
+      case "repeat":
+        action = player.setRepeat;
+        args = [Number(command.value)];
+        break;
       default: return;
     }
-    if (typeof action !== "function") return reportControl(command.name, false, "PlayerAPI method not found");
+    if (typeof action !== "function") return reportControl(command.name, false, "PlayerAPI method not found", command.id);
     try {
       await action.apply(player, args);
-      await reportControl(command.name, true);
+      await reportControl(command.name, true, null, command.id);
     } catch (error) {
-      await reportControl(command.name, false, error?.message ?? String(error));
+      await reportControl(command.name, false, error?.message ?? String(error), command.id);
     }
   }
 
-  async function reportControl(name, success, error = null) {
+  async function reportControl(name, success, error = null, id = null, values = null) {
     try {
       await fetch(controlResultEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, success, error }),
+        body: JSON.stringify({ id, name, success, error, values }),
       });
     } catch { }
   }

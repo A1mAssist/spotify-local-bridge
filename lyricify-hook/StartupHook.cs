@@ -64,8 +64,11 @@ internal static class PlaybackPatch
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SkipNext), 1);
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SkipPrevious), 1);
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SeekTo), 2);
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.SetShuffle), 2);
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.SetRepeat), 2);
+        PatchLibrary(harmony);
         PatchMediaSessionControls(harmony);
-        StartupHook.Log("PATCHED playback reads and controls (2 reads, 5 controls)");
+        StartupHook.Log("PATCHED playback reads, modes, and library controls");
     }
 
     private static void PatchControl(Harmony harmony, HarmonyMethod prefix, string name, int parameterCount)
@@ -88,7 +91,7 @@ internal static class PlaybackPatch
             return;
         }
 
-        foreach (var name in new[] { "PausePlayback", "ResumePlayback", "SkipPrevious", "SkipNext", "SeekTo" })
+        foreach (var name in new[] { "PausePlayback", "ResumePlayback", "SkipPrevious", "SkipNext", "SeekTo", "SetShuffle", "SetRepeat" })
         {
             var method = type.GetMethod(name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             if (method == null)
@@ -100,6 +103,23 @@ internal static class PlaybackPatch
             harmony.Patch(method, prefix: prefix);
             StartupHook.Log($"PATCHED MediaSessionHelper.{name} fallback");
         }
+    }
+
+    private static void PatchLibrary(Harmony harmony)
+    {
+        var check = typeof(LibraryClient).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .SingleOrDefault(method => method.Name == nameof(LibraryClient.CheckTracks) && method.GetParameters().Length == 2);
+        var save = typeof(LibraryClient).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .SingleOrDefault(method => method.Name == nameof(LibraryClient.SaveTracks) && method.GetParameters().Length == 2);
+        var remove = typeof(LibraryClient).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .SingleOrDefault(method => method.Name == nameof(LibraryClient.RemoveTracks) && method.GetParameters().Length == 2);
+        if (check == null || save == null || remove == null)
+            throw new InvalidOperationException("Expected LibraryAPI track methods.");
+
+        harmony.Patch(check, prefix: new HarmonyMethod(typeof(PlaybackPatch).GetMethod(nameof(LibraryCheckPrefix), BindingFlags.NonPublic | BindingFlags.Static)));
+        harmony.Patch(save, prefix: new HarmonyMethod(typeof(PlaybackPatch).GetMethod(nameof(LibraryMutationPrefix), BindingFlags.NonPublic | BindingFlags.Static)));
+        harmony.Patch(remove, prefix: new HarmonyMethod(typeof(PlaybackPatch).GetMethod(nameof(LibraryMutationPrefix), BindingFlags.NonPublic | BindingFlags.Static)));
+        StartupHook.Log("PATCHED LibraryAPI CheckTracks, SaveTracks, RemoveTracks");
     }
 
     private static bool Prefix(ref Task<CurrentlyPlayingContext> __result)
@@ -117,6 +137,8 @@ internal static class PlaybackPatch
             nameof(PlayerClient.SkipNext) => "next",
             nameof(PlayerClient.SkipPrevious) => "previous",
             nameof(PlayerClient.SeekTo) => "seek",
+            nameof(PlayerClient.SetShuffle) => "shuffle",
+            nameof(PlayerClient.SetRepeat) => "repeat",
             _ => null
         };
         if (command == null)
@@ -125,10 +147,16 @@ internal static class PlaybackPatch
             return false;
         }
 
-        int? value = command == "seek" ? ReadPosition(__args) : null;
-        if (command == "seek" && !value.HasValue)
+        int? value = command switch
         {
-            StartupHook.Log("CONTROL REJECT seek (missing position)");
+            "seek" => ReadPosition(__args),
+            "shuffle" => ReadShuffle(__args),
+            "repeat" => ReadRepeat(__args),
+            _ => null
+        };
+        if ((command == "seek" || command == "shuffle" || command == "repeat") && !value.HasValue)
+        {
+            StartupHook.Log($"CONTROL REJECT {command} (missing value)");
             __result = Task.FromResult(false);
             return false;
         }
@@ -139,10 +167,60 @@ internal static class PlaybackPatch
         return false;
     }
 
-    private static bool MediaSessionControlPrefix(MethodBase __originalMethod, ref Task<bool> __result)
+    private static bool MediaSessionControlPrefix(MethodBase __originalMethod, object[] __args, ref Task<bool> __result)
     {
+        var command = __originalMethod.Name switch
+        {
+            "SetShuffle" => "shuffle",
+            "SetRepeat" => "repeat",
+            _ => null
+        };
+        if (command != null)
+        {
+            var value = command == "shuffle" ? ReadShuffle(__args) : ReadRepeat(__args);
+            if (!value.HasValue && command == "repeat") value = LocalBridgeServer.NextRepeat();
+            if (value.HasValue)
+            {
+                try
+                {
+                    var result = LocalBridgeServer.EnqueueRequestAsync(command, value).GetAwaiter().GetResult();
+                    StartupHook.Log($"MEDIA SESSION {command} success={result.Success}");
+                    __result = Task.FromResult(result.Success);
+                }
+                catch (Exception error)
+                {
+                    StartupHook.Log($"MEDIA SESSION {command} failed={error.GetType().Name}");
+                    __result = Task.FromResult(false);
+                }
+                return false;
+            }
+        }
+
         StartupHook.Log($"MEDIA SESSION BYPASS {__originalMethod.Name}");
         __result = Task.FromResult(false);
+        return false;
+    }
+
+    private static bool LibraryCheckPrefix(object[] __args, ref Task<List<bool>> __result)
+    {
+        var ids = ReadIds(__args);
+        __result = ids == null
+            ? Task.FromException<List<bool>>(new InvalidOperationException("Library check request did not contain track IDs."))
+            : LocalBridgeServer.CheckTracksAsync(ids);
+        return false;
+    }
+
+    private static bool LibraryMutationPrefix(MethodBase __originalMethod, object[] __args, ref Task<bool> __result)
+    {
+        var ids = ReadIds(__args);
+        if (ids == null)
+        {
+            __result = Task.FromException<bool>(new InvalidOperationException("Library request did not contain track IDs."));
+            return false;
+        }
+
+        var command = __originalMethod.Name == nameof(LibraryClient.SaveTracks) ? "library-add" : "library-remove";
+        __result = LocalBridgeServer.MutateTracksAsync(command, ids);
         return false;
     }
 
@@ -151,13 +229,57 @@ internal static class PlaybackPatch
         foreach (var arg in args)
         {
             if (arg == null) continue;
-            foreach (var propertyName in new[] { "Position", "PositionMs" })
+            foreach (var propertyName in new[] { "Position", "PositionMs", "PositonMs" })
             {
                 var property = arg.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
                 var value = property?.GetValue(arg);
                 if (value is long position && position >= 0 && position <= int.MaxValue) return (int)position;
                 if (value is int positionInt && positionInt >= 0) return positionInt;
             }
+        }
+        return null;
+    }
+
+    private static int? ReadShuffle(object[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg is bool shuffle) return shuffle ? 1 : 0;
+            var stateProperty = arg?.GetType().GetProperty("State", BindingFlags.Instance | BindingFlags.Public);
+            if (stateProperty?.GetValue(arg) is bool requestState) return requestState ? 1 : 0;
+        }
+        return null;
+    }
+
+    private static int? ReadRepeat(object[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg == null) continue;
+            object value = arg;
+            var stateProperty = arg.GetType().GetProperty("StateParam", BindingFlags.Instance | BindingFlags.Public);
+            if (stateProperty != null) value = stateProperty.GetValue(arg)!;
+            var name = value.ToString();
+            if (name == null) continue;
+            return name switch
+            {
+                "Track" => 2,
+                "Context" => 1,
+                "Off" => 0,
+                _ => null
+            };
+        }
+        return null;
+    }
+
+    private static string[]? ReadIds(object[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (arg == null) continue;
+            var property = arg.GetType().GetProperty("Ids", BindingFlags.Instance | BindingFlags.Public);
+            if (property?.GetValue(arg) is IEnumerable<string> ids)
+                return ids.ToArray();
         }
         return null;
     }

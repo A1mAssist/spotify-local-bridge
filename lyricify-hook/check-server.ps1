@@ -58,15 +58,21 @@ try {
     if ((Post-State $state).StatusCode -ne 204) { throw 'Valid state was rejected.' }
     $enqueue = $server.GetMethod('EnqueueCommand', $flags)
     if (-not $enqueue.Invoke($null, @('seek', [Nullable[int]]::new(12000)))) { throw 'Command was not queued.' }
+    if (-not $enqueue.Invoke($null, @('shuffle', [Nullable[int]]::new(1)))) { throw 'Shuffle command was not queued.' }
+    if (-not $enqueue.Invoke($null, @('repeat', [Nullable[int]]::new(2)))) { throw 'Repeat command was not queued.' }
     $foreignCommands = Invoke-WebRequest "$base/commands" -Headers @{ Origin = 'https://example.com' } -SkipHttpErrorCheck
     if ($foreignCommands.StatusCode -ne 403) { throw 'Foreign origin read commands.' }
     $commandsJson = (Invoke-WebRequest "$base/commands" -Headers @{ Origin = $origin }).Content
-    if ($commandsJson -notmatch '"name"\s*:\s*"seek"' -or $commandsJson -notmatch '"value"\s*:\s*12000') { throw 'Command JSON did not use XPUI field names.' }
+    if ($commandsJson -notmatch '"name"\s*:\s*"seek"' -or $commandsJson -notmatch '"value"\s*:\s*12000' -or
+        $commandsJson -notmatch '"name"\s*:\s*"shuffle"' -or $commandsJson -notmatch '"name"\s*:\s*"repeat"') { throw 'Command JSON did not use XPUI field names.' }
     $commands = $commandsJson | ConvertFrom-Json
-    if ($commands.Count -ne 1 -or $commands[0].name -ne 'seek' -or $commands[0].value -ne 12000) { throw 'Queued command was not returned.' }
+    if ($commands.Count -ne 3 -or $commands[0].name -ne 'seek' -or $commands[0].value -ne 12000 -or
+        $commands[1].name -ne 'shuffle' -or $commands[1].value -ne 1 -or
+        $commands[2].name -ne 'repeat' -or $commands[2].value -ne 2) { throw 'Queued command was not returned.' }
     $current = (Invoke-WebRequest "$base/state").Content | ConvertFrom-Json
     if ($current.track_uri -ne $state.track_uri -or $current.isrc -ne $state.isrc -or
         $current.progress_ms -lt 5000 -or $current.updated_at_ms -le 0) { throw 'Stored state is incorrect.' }
+    if ($server.GetMethod('NextRepeat', $flags).Invoke($null, @()) -ne 1) { throw 'Repeat cycle did not advance from off to context.' }
     if ($SpotifyApiDll) {
         $patch = $hook.GetType('PlaybackPatch', $true)
         $read = $patch.GetMethod('ReadLocalPlayback', $flags)
@@ -75,6 +81,16 @@ try {
             $playback.ProgressMs -lt 5000 -or $playback.Item.ExternalIds['isrc'] -ne $state.isrc) {
             throw 'Hook did not map embedded bridge state.'
         }
+        $readPosition = $patch.GetMethod('ReadPosition', $flags)
+        $seekRequest = [SpotifyAPI.Web.PlayerSeekToRequest]::new([long]12000)
+        $readArgs = [object[]]::new(1)
+        $readArgs[0] = [object[]]@($seekRequest)
+        if ($readPosition.Invoke($null, $readArgs) -ne 12000) { throw 'Hook did not read PlayerSeekToRequest.PositonMs.' }
+        $readShuffle = $patch.GetMethod('ReadShuffle', $flags)
+        $shuffleRequest = [SpotifyAPI.Web.PlayerShuffleRequest]::new($true)
+        $shuffleArgs = [object[]]::new(1)
+        $shuffleArgs[0] = [object[]]@($shuffleRequest)
+        if ($readShuffle.Invoke($null, $shuffleArgs) -ne 1) { throw 'Hook did not read PlayerShuffleRequest.State.' }
     }
     $metadataCache = $hook.GetType('SpotifyMetadataCache', $true)
     $sampleMetadata = 'prefix USUG11600998a' + (('x' * 150) -join '') + 'spotify:track:37F0uwRSrdzkBiuj0D5UHI'

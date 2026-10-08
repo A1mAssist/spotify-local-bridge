@@ -15,7 +15,17 @@ internal sealed record BridgeSnapshot(BridgeState State, long UpdatedAt)
 
 internal sealed record BridgeCommand(
     [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("value")] int? Value);
+    [property: JsonPropertyName("value")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    int? Value = null,
+    [property: JsonPropertyName("uris")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string[]? Uris = null,
+    [property: JsonPropertyName("id")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Id = null);
+
+internal sealed record BridgeControlResult(bool Success, string? Error, bool[]? Values);
 
 internal static class LocalBridgeServer
 {
@@ -29,6 +39,7 @@ internal static class LocalBridgeServer
     private static BridgeSnapshot? current;
     private static readonly ConcurrentQueue<BridgeCommand> commands = new();
     private static readonly SemaphoreSlim commandSignal = new(0);
+    private static readonly ConcurrentDictionary<string, TaskCompletionSource<BridgeControlResult>> PendingRequests = new(StringComparer.Ordinal);
 
     internal static void Start(int port = 48711)
     {
@@ -52,6 +63,9 @@ internal static class LocalBridgeServer
         Volatile.Write(ref current, null);
         while (commands.TryDequeue(out _)) { }
         while (commandSignal.Wait(0)) { }
+        foreach (var pending in PendingRequests.Values)
+            pending.TrySetException(new InvalidOperationException("Spotify bridge stopped."));
+        PendingRequests.Clear();
     }
 
     internal static Task<bool> EnqueueCommand(string name, int? value = null)
@@ -60,6 +74,64 @@ internal static class LocalBridgeServer
         commands.Enqueue(new BridgeCommand(name, value));
         commandSignal.Release();
         return Task.FromResult(true);
+    }
+
+    internal static Task<BridgeControlResult> EnqueueRequestAsync(
+        string name, int? value = null, IReadOnlyList<string>? uris = null)
+    {
+        if (commands.Count >= MaxCommands)
+            return Task.FromException<BridgeControlResult>(new InvalidOperationException("Spotify bridge command queue is full."));
+
+        var id = Guid.NewGuid().ToString("N");
+        var completion = new TaskCompletionSource<BridgeControlResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!PendingRequests.TryAdd(id, completion))
+            return Task.FromException<BridgeControlResult>(new InvalidOperationException("Could not allocate bridge request."));
+
+        commands.Enqueue(new BridgeCommand(name, value, uris?.ToArray(), id));
+        commandSignal.Release();
+        return AwaitRequestAsync(id, completion);
+    }
+
+    private static async Task<BridgeControlResult> AwaitRequestAsync(
+        string id, TaskCompletionSource<BridgeControlResult> completion)
+    {
+        try
+        {
+            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        }
+        finally
+        {
+            PendingRequests.TryRemove(id, out _);
+        }
+    }
+
+    internal static async Task<List<bool>> CheckTracksAsync(IReadOnlyList<string> ids)
+    {
+        var uris = TrackUris(ids);
+        var result = await EnqueueRequestAsync("library-check", uris: uris).ConfigureAwait(false);
+        if (!result.Success || result.Values == null || result.Values.Length != ids.Count)
+            throw new InvalidOperationException(result.Error ?? "Spotify library state was unavailable.");
+        return result.Values.ToList();
+    }
+
+    internal static async Task<bool> MutateTracksAsync(string command, IReadOnlyList<string> ids)
+    {
+        var result = await EnqueueRequestAsync(command, uris: TrackUris(ids)).ConfigureAwait(false);
+        if (!result.Success)
+            throw new InvalidOperationException(result.Error ?? "Spotify library operation failed.");
+        return true;
+    }
+
+    private static string[] TrackUris(IReadOnlyList<string> ids)
+    {
+        if (ids.Count == 0 || ids.Count > 40)
+            throw new ArgumentException("Spotify library requests must contain 1 to 40 tracks.", nameof(ids));
+        return ids.Select(id =>
+        {
+            if (id.StartsWith("spotify:track:", StringComparison.Ordinal)) return id;
+            if (id.Length is >= 10 and <= 64 && id.All(char.IsLetterOrDigit)) return $"spotify:track:{id}";
+            throw new ArgumentException("Invalid Spotify track ID.", nameof(ids));
+        }).ToArray();
     }
 
     private static BridgeCommand[] TakeCommands()
@@ -78,6 +150,12 @@ internal static class LocalBridgeServer
         var snapshot = Volatile.Read(ref current);
         return snapshot != null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UpdatedAt <= MaxAgeMs
             ? snapshot : null;
+    }
+
+    internal static int? NextRepeat()
+    {
+        var repeat = Read()?.State.Repeat;
+        return repeat is >= 0 and <= 2 ? (repeat + 1) % 3 : null;
     }
 
     private static async Task AcceptAsync(HttpListener instance, int port)
@@ -203,10 +281,16 @@ internal static class LocalBridgeServer
                 }
                 using var document = await JsonDocument.ParseAsync(request.InputStream).ConfigureAwait(false);
                 var root = document.RootElement;
+                var requestId = root.TryGetProperty("id", out var idValue) ? idValue.GetString() : null;
                 var name = root.TryGetProperty("name", out var nameValue) ? nameValue.GetString() : null;
                 var success = root.TryGetProperty("success", out var successValue) && successValue.GetBoolean();
                 var error = root.TryGetProperty("error", out var errorValue) ? errorValue.GetString() : null;
-                StartupHook.Log($"CONTROL RESULT {name ?? "?"} success={success}{(string.IsNullOrWhiteSpace(error) ? "" : $" error={error}")}");
+                bool[]? values = null;
+                if (root.TryGetProperty("values", out var valuesElement) && valuesElement.ValueKind == JsonValueKind.Array)
+                    values = valuesElement.EnumerateArray().Select(value => value.ValueKind == JsonValueKind.True).ToArray();
+                if (requestId != null && PendingRequests.TryRemove(requestId, out var completion))
+                    completion.TrySetResult(new BridgeControlResult(success, error, values));
+                StartupHook.Log($"CONTROL RESULT {name ?? "?"} id={requestId ?? "-"} success={success}{(string.IsNullOrWhiteSpace(error) ? "" : $" error={error}")}");
                 response.StatusCode = 204;
                 return;
             }
