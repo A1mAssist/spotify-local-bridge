@@ -1,6 +1,5 @@
 using System.Reflection;
 using System.Runtime.Loader;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using HarmonyLib;
 using SpotifyAPI.Web;
@@ -19,14 +18,21 @@ public static class StartupHook
             return File.Exists(path) ? context.LoadFromAssemblyPath(path) : null;
         };
 
-        try
+        // ponytail: Lyricify 4.4.0's protected initializer crashed when patched immediately; revisit after a client update.
+        _ = Task.Run(async () =>
         {
-            PlaybackPatch.Install();
-        }
-        catch (Exception error)
-        {
-            Log($"PATCH FAILED: {error.GetType().Name}: {error.Message}");
-        }
+            await Task.Delay(2000).ConfigureAwait(false);
+            try
+            {
+                LocalBridgeServer.Start();
+                PlaybackPatch.Install();
+            }
+            catch (Exception error)
+            {
+                LocalBridgeServer.Stop();
+                Log($"PATCH FAILED: {error.GetType().Name}: {error.Message}");
+            }
+        });
     }
 
     internal static void Log(string message)
@@ -44,11 +50,6 @@ public static class StartupHook
 
 internal static class PlaybackPatch
 {
-    private static readonly HttpClient Client = new(new HttpClientHandler { UseProxy = false })
-    {
-        Timeout = TimeSpan.FromSeconds(2)
-    };
-
     public static void Install()
     {
         var harmony = new Harmony("app.lyricify.spotify-local-bridge.playback");
@@ -66,21 +67,19 @@ internal static class PlaybackPatch
         return false;
     }
 
-    private static async Task<CurrentlyPlayingContext> ReadLocalPlayback()
+    private static Task<CurrentlyPlayingContext> ReadLocalPlayback()
     {
         try
         {
-            using var response = await Client.GetAsync("http://127.0.0.1:48711/state").ConfigureAwait(false);
-            if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null!;
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            var state = await JsonSerializer.DeserializeAsync<BridgeState>(stream).ConfigureAwait(false);
-            return Map(state);
+            var snapshot = LocalBridgeServer.Read();
+            var playback = Map(snapshot?.State);
+            if (playback != null) playback.ProgressMs = snapshot!.ProgressMs;
+            return Task.FromResult<CurrentlyPlayingContext>(playback!);
         }
         catch (Exception error)
         {
             StartupHook.Log($"BRIDGE ERROR: {error.GetType().Name}");
-            return null!;
+            return Task.FromResult<CurrentlyPlayingContext>(null!);
         }
     }
 

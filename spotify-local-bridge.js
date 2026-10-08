@@ -8,6 +8,8 @@
   let player = null;
   let cosmos = null;
   let registry = null;
+  let latestState = null;
+  let queued = false;
   const isrcFallbackCache = new Map();
 
   function resolve(name) {
@@ -27,7 +29,14 @@
         player = null;
       }
       if (!player) setTimeout(connect, 500);
-      else publish();
+      else {
+        latestState = player._state;
+        player._events?.addListener?.("update", ({ data }) => {
+          latestState = data ?? null;
+          publish();
+        });
+        publish();
+      }
     };
     connect();
     setInterval(publish, 1000);
@@ -88,7 +97,7 @@
   }
 
   async function snapshot() {
-    const state = player._state;
+    const state = latestState;
     const item = state?.item;
     const meta = item?.metadata ?? {};
     const isrc = await getTrackIsrc(item, meta);
@@ -120,7 +129,11 @@
   }
 
   async function publish() {
-    if (pending || !player?._state) return;
+    if (!player) return;
+    if (pending) {
+      queued = true;
+      return;
+    }
     pending = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2500);
@@ -139,6 +152,10 @@
     } finally {
       clearTimeout(timeout);
       pending = false;
+      if (queued) {
+        queued = false;
+        publish();
+      }
     }
   }
 
