@@ -67,11 +67,12 @@
     switch (command.name) {
       case "pause": return player.pause?.();
       case "resume": return player.resume?.();
-      case "next": return player.nextTrack?.() ?? player.skipNext?.();
-      case "previous": return player.previousTrack?.() ?? player.skipPrevious?.();
+      case "next": return player.skipToNext?.() ?? player.nextTrack?.() ?? player.skipNext?.();
+      case "previous": return player.skipToPrevious?.() ?? player.previousTrack?.() ?? player.skipPrevious?.();
       case "seek": {
         const position = Number(command.value);
-        if (Number.isFinite(position) && position >= 0) return player.seek?.(position);
+        if (Number.isFinite(position) && position >= 0)
+          return player.seekTo?.(position) ?? player.seek?.(position);
         return;
       }
       default: return;

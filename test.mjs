@@ -37,9 +37,9 @@ player._events = { addListener(name, callback) {
 } };
 player.pause = async () => actions.push("pause");
 player.resume = async () => actions.push("resume");
-player.nextTrack = async () => actions.push("next");
-player.previousTrack = async () => actions.push("previous");
-player.seek = async (position) => actions.push(`seek:${position}`);
+player.skipToNext = async () => actions.push("next");
+player.skipToPrevious = async () => actions.push("previous");
+player.seekTo = async (position) => actions.push(`seek:${position}`);
 const cosmos = { get: async () => {
   cosmosCalls++;
   return { external_id: [{ type: "isrc", id: "US-UM7-17-03861" }] };
