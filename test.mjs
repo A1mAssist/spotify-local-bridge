@@ -31,6 +31,7 @@ const actions = [];
 const commandQueue = [];
 let holdFetch = false;
 let releaseFetch;
+let metadataMode = "getter";
 player._events = { addListener(name, callback) {
   assert.equal(name, "update");
   update = callback;
@@ -40,8 +41,12 @@ player.resume = async () => actions.push("resume");
 player.skipToNext = async () => actions.push("next");
 player.skipToPrevious = async () => actions.push("previous");
 player.seekTo = async (position) => actions.push(`seek:${position}`);
-const cosmos = { get: async () => {
+const cosmos = { get: async (url) => {
   cosmosCalls++;
+  if (metadataMode === "api") {
+    if (url.startsWith("sp://")) return {};
+    return { external_ids: { isrc: "GBUM71703861" } };
+  }
   const metadata = Object.create({
     get external_id() { return [{ type: "isrc", id: "US-UM7-17-03861" }]; },
   });
@@ -100,6 +105,11 @@ update({ data: { ...player._state, isPaused: false, positionAsOfTimestamp: 2000,
 await new Promise((resolve) => setImmediate(resolve));
 assert.ok(messages.at(-1).progress_ms >= 2000 && messages.at(-1).progress_ms < 2100);
 assert.equal(cosmosCalls, 1);
+metadataMode = "api";
+update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6" } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).isrc, "GBUM71703861");
+assert.equal(cosmosCalls, 3);
 holdFetch = true;
 tick();
 await new Promise((resolve) => setImmediate(resolve));

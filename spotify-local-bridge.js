@@ -162,15 +162,17 @@
     if (!trackId || !cosmos?.get) return null;
     if (isrcFallbackCache.has(trackId)) return isrcFallbackCache.get(trackId);
     const lookup = (async () => {
-      try {
-        const metadata = await Promise.race([
-          cosmos.get(`sp://metadata/track/${trackId}`),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Cosmos timeout")), 1500)),
-        ]);
-        return findIsrc(metadata);
-      } catch {
-        return null;
+      for (const url of [`sp://metadata/track/${trackId}`, `https://api.spotify.com/v1/tracks/${trackId}`]) {
+        try {
+          const metadata = await Promise.race([
+            cosmos.get(url),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Cosmos timeout")), 1500)),
+          ]);
+          const isrc = findIsrc(metadata);
+          if (isrc) return isrc;
+        } catch { }
       }
+      return null;
     })();
     isrcFallbackCache.set(trackId, lookup);
     return lookup;

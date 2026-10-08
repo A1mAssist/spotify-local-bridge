@@ -76,6 +76,10 @@ try {
             throw 'Hook did not map embedded bridge state.'
         }
     }
+    $metadataCache = $hook.GetType('SpotifyMetadataCache', $true)
+    $sampleMetadata = 'prefix USUG11600998a' + (('x' * 150) -join '') + 'spotify:track:37F0uwRSrdzkBiuj0D5UHI'
+    $nearbyIsrc = $metadataCache.GetMethod('FindNearbyIsrc', $flags).Invoke($null, @($sampleMetadata, 170))
+    if ($nearbyIsrc -ne 'USUG11600998') { throw 'Nearby ISRC association is incorrect.' }
     $state.is_playing = $false
     $state.progress_ms = 9000
     if ((Post-State $state).StatusCode -ne 204) { throw 'Pause update was rejected.' }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -161,6 +162,15 @@ internal static class LocalBridgeServer
                     response.StatusCode = 400;
                     return;
                 }
+                if (state!.Isrc == null)
+                {
+                    var cachedIsrc = await SpotifyMetadataCache.LookupAsync(state.TrackUri).ConfigureAwait(false);
+                    if (cachedIsrc != null)
+                    {
+                        state.Isrc = cachedIsrc;
+                        StartupHook.Log($"ISRC CACHE {state.TrackUri} {cachedIsrc}");
+                    }
+                }
                 Volatile.Write(ref current, new BridgeSnapshot(state!, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
                 response.StatusCode = 204;
                 return;
@@ -251,5 +261,105 @@ internal static class LocalBridgeServer
             && state.ProgressMs is >= 0 and <= 43_200_000
             && Optional(state.ContextUri, 512)
             && state.Repeat is >= 0 and <= 2;
+    }
+}
+
+internal static class SpotifyMetadataCache
+{
+    private const int SearchRadius = 8 * 1024;
+    private const int AssociationRadius = 512;
+    private const int MaxFileSize = 8 * 1024 * 1024;
+    private static readonly Regex IsrcField = new(
+        @"(?i)isrc[\x00-\x1F\x80-\xFF]{0,64}([A-Z]{2}[A-Z0-9]{3}\d{7})",
+        RegexOptions.Compiled);
+    private static readonly Regex IsrcValue = new(
+        @"(?i)([A-Z]{2}[A-Z0-9]{3}\d{7})",
+        RegexOptions.Compiled);
+    private static readonly ConcurrentDictionary<string, Task<string?>> Results = new(StringComparer.Ordinal);
+
+    internal static Task<string?> LookupAsync(string? trackUri)
+    {
+        const string prefix = "spotify:track:";
+        if (trackUri?.StartsWith(prefix, StringComparison.Ordinal) != true) return Task.FromResult<string?>(null);
+        var trackId = trackUri[prefix.Length..];
+        if (trackId.Length is < 10 or > 64) return Task.FromResult<string?>(null);
+        return Results.GetOrAdd(trackId, static id => Task.Run(() => Lookup(id)));
+    }
+
+    private static string? Lookup(string trackId)
+    {
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Spotify", "Users");
+        if (!Directory.Exists(root)) return null;
+        foreach (var user in Directory.EnumerateDirectories(root))
+        {
+            var cache = Path.Combine(user, "primary.ldb");
+            if (!Directory.Exists(cache)) continue;
+            var files = Directory.EnumerateFiles(cache)
+                .Where(path => !Path.GetFileName(path).Equals("LOCK", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(path => File.GetLastWriteTimeUtc(path));
+            foreach (var file in files)
+            {
+                var isrc = FindInFile(file, trackId);
+                if (isrc != null) return isrc;
+            }
+        }
+        return null;
+    }
+
+    private static string? FindInFile(string path, string trackId)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length <= 0 || stream.Length > MaxFileSize) return null;
+            var bytes = new byte[(int)stream.Length];
+            var offset = 0;
+            while (offset < bytes.Length)
+            {
+                var count = stream.Read(bytes, offset, bytes.Length - offset);
+                if (count == 0) break;
+                offset += count;
+            }
+            if (offset != bytes.Length) return null;
+            var text = Encoding.Latin1.GetString(bytes);
+            foreach (var needle in new[] { $"spotify:track:{trackId}", trackId })
+            {
+                var start = 0;
+                while ((start = text.IndexOf(needle, start, StringComparison.Ordinal)) >= 0)
+                {
+                    var isrc = FindNearbyIsrc(text, start);
+                    if (isrc != null) return isrc;
+                    start += needle.Length;
+                }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return null;
+    }
+
+    private static string? FindNearbyIsrc(string text, int trackOffset)
+    {
+        var from = Math.Max(0, trackOffset - SearchRadius);
+        var length = Math.Min(text.Length - from, SearchRadius * 2);
+        var window = text.Substring(from, length);
+        Match? best = null;
+        foreach (Match match in IsrcField.Matches(window))
+        {
+            var distance = Math.Abs(from + match.Index - trackOffset);
+            if (distance <= AssociationRadius
+                && (best == null || distance < Math.Abs(from + best.Index - trackOffset)))
+                best = match;
+        }
+        if (best != null) return best.Groups[1].Value.ToUpperInvariant();
+
+        foreach (Match match in IsrcValue.Matches(window))
+        {
+            var distance = Math.Abs(from + match.Index - trackOffset);
+            if (distance <= AssociationRadius
+                && (best == null || distance < Math.Abs(from + best.Index - trackOffset)))
+                best = match;
+        }
+        return best?.Groups[1].Value.ToUpperInvariant();
     }
 }
