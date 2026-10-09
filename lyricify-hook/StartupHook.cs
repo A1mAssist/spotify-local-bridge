@@ -66,9 +66,10 @@ internal static class PlaybackPatch
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SeekTo), 2);
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SetShuffle), 2);
         PatchControl(harmony, controlPrefix, nameof(PlayerClient.SetRepeat), 2);
+        PatchControl(harmony, controlPrefix, nameof(PlayerClient.SetVolume), 2);
         PatchLibrary(harmony);
         PatchMediaSessionControls(harmony);
-        StartupHook.Log("PATCHED playback reads, modes, and library controls");
+        StartupHook.Log("PATCHED playback reads, modes, volume, and library controls");
     }
 
     private static void PatchControl(Harmony harmony, HarmonyMethod prefix, string name, int parameterCount)
@@ -87,9 +88,17 @@ internal static class PlaybackPatch
             .FirstOrDefault(candidate => candidate != null);
         if (type == null)
         {
-            StartupHook.Log("MEDIA SESSION TYPE NOT FOUND");
-            return;
+            throw new InvalidOperationException("MediaSessionHelper type not found.");
         }
+
+        var init = type.GetMethod("InitMediaSessionManager", BindingFlags.Instance | BindingFlags.Public);
+        var timer = type.GetMethod("MediaSessionTimerEvent", BindingFlags.Instance | BindingFlags.Public);
+        if (init == null || timer == null)
+            throw new InvalidOperationException("Expected MediaSession initialization and timer methods.");
+        // Lyricify's Plus correction issues pause/resume commands; XPUI supplies the timeline instead.
+        harmony.Patch(init, prefix: new HarmonyMethod(typeof(PlaybackPatch).GetMethod(nameof(MediaSessionInitPrefix), BindingFlags.NonPublic | BindingFlags.Static)));
+        harmony.Patch(timer, prefix: new HarmonyMethod(typeof(PlaybackPatch).GetMethod(nameof(MediaSessionTimerPrefix), BindingFlags.NonPublic | BindingFlags.Static)));
+        StartupHook.Log("PATCHED MediaSession timeline enhancement bypass (including Plus)");
 
         foreach (var name in new[] { "PausePlayback", "ResumePlayback", "SkipPrevious", "SkipNext", "SeekTo", "SetShuffle", "SetRepeat" })
         {
@@ -104,6 +113,14 @@ internal static class PlaybackPatch
             StartupHook.Log($"PATCHED MediaSessionHelper.{name} fallback");
         }
     }
+
+    private static bool MediaSessionTimerPrefix(ref Task<bool> __result)
+    {
+        __result = Task.FromResult(false);
+        return false;
+    }
+
+    private static bool MediaSessionInitPrefix() => false;
 
     private static void PatchLibrary(Harmony harmony)
     {
@@ -130,6 +147,11 @@ internal static class PlaybackPatch
 
     private static bool ControlPrefix(MethodBase __originalMethod, object[] __args, ref Task<bool> __result)
     {
+        if (__originalMethod.Name == nameof(PlayerClient.SetVolume))
+        {
+            __result = SetLocalVolume(__args.OfType<PlayerVolumeRequest>().FirstOrDefault()?.VolumePercent);
+            return false;
+        }
         var command = __originalMethod.Name switch
         {
             nameof(PlayerClient.PausePlayback) => "pause",
@@ -165,6 +187,22 @@ internal static class PlaybackPatch
         StartupHook.Log($"CONTROL {command}{(value.HasValue ? $" {value.Value}" : "")} queued={accepted}");
         __result = Task.FromResult(accepted);
         return false;
+    }
+
+    private static async Task<bool> SetLocalVolume(int? percent)
+    {
+        if (percent is not (>= 0 and <= 100)) return false;
+        try
+        {
+            var result = await LocalBridgeServer.EnqueueRequestAsync("volume", percent).ConfigureAwait(false);
+            StartupHook.Log($"CONTROL volume {percent} success={result.Success}");
+            return result.Success;
+        }
+        catch (Exception error)
+        {
+            StartupHook.Log($"CONTROL volume failed={error.GetType().Name}");
+            return false;
+        }
     }
 
     private static bool MediaSessionControlPrefix(MethodBase __originalMethod, object[] __args, ref Task<bool> __result)
@@ -356,7 +394,8 @@ internal static class PlaybackPatch
                 Name = "Spotify",
                 Type = "Computer",
                 IsActive = true,
-                SupportsVolume = false
+                SupportsVolume = state.VolumePercent.HasValue,
+                VolumePercent = state.VolumePercent
             },
             Context = state.ContextUri == null ? null! : new Context
             {
@@ -397,7 +436,9 @@ internal sealed class BridgeState
     [JsonPropertyName("duration_ms")] public int DurationMs { get; set; }
     [JsonPropertyName("progress_ms")] public int ProgressMs { get; set; }
     [JsonPropertyName("is_playing")] public bool IsPlaying { get; set; }
+    [JsonPropertyName("playback_speed")] public double PlaybackSpeed { get; set; } = 1;
     [JsonPropertyName("context_uri")] public string? ContextUri { get; set; }
     [JsonPropertyName("shuffle")] public bool Shuffle { get; set; }
     [JsonPropertyName("repeat")] public int Repeat { get; set; }
+    [JsonPropertyName("volume_percent")] public int? VolumePercent { get; set; }
 }

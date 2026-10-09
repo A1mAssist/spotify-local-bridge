@@ -25,11 +25,20 @@ $playback = $method.Invoke($null, @($state))
 $device = $playback.Device
 $track = $playback.Item
 if ($null -eq $device -or $device.Name -ne 'Spotify' -or
+    $device.SupportsVolume -or $null -ne $device.VolumePercent -or
     $null -eq $track -or $track.Id -ne '0BxE4FqsDD1Ot4YuBXwAPp' -or
     $track.Name -ne '505' -or $track.Artists[0].Name -ne 'Arctic Monkeys' -or
     $track.Album.Name -ne 'Favourite Worst Nightmare' -or $track.DurationMs -ne 253000 -or
     $track.ExternalIds['isrc'] -ne 'USUM71703861') {
     throw 'Playback mapping does not satisfy Lyricify lyric-loading fields.'
+}
+
+foreach ($percent in @(0, 37, 100)) {
+    $stateType.GetProperty('VolumePercent').SetValue($state, [Nullable[int]]::new($percent))
+    $device = $method.Invoke($null, @($state)).Device
+    if (-not $device.SupportsVolume -or $device.VolumePercent -ne $percent) {
+        throw "Volume $percent was not mapped to an enabled device."
+    }
 }
 
 Write-Output 'Playback map check passed'

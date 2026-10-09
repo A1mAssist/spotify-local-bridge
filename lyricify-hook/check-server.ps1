@@ -55,6 +55,37 @@ try {
     $invalid.title = 'x' * 17000
     if ((Post-State $invalid).StatusCode -ne 413) { throw 'Oversized state was accepted.' }
     $state.isrc = 'USUM71703861'
+    foreach ($percent in @(-1, 101)) {
+        $invalid = $state.Clone()
+        $invalid.volume_percent = $percent
+        if ((Post-State $invalid).StatusCode -ne 400) { throw "Invalid volume $percent was accepted." }
+    }
+    foreach ($speed in @(-0.1, 4.1)) {
+        $invalid = $state.Clone()
+        $invalid.playback_speed = $speed
+        if ((Post-State $invalid).StatusCode -ne 400) { throw 'Invalid playback speed was accepted.' }
+    }
+    $snapshotType = $hook.GetType('BridgeSnapshot', $true)
+    $timedState = [Activator]::CreateInstance($hook.GetType('BridgeState', $true))
+    $timedState.ProgressMs = 5000
+    $timedState.DurationMs = 253000
+    foreach ($speed in @(0.0, 0.5, 1.0, 2.0)) {
+        $timedState.IsPlaying = $true
+        $timedState.PlaybackSpeed = $speed
+        $snapshot = [Activator]::CreateInstance($snapshotType, @($timedState, ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - 2000)))
+        $expected = 5000 + 2000 * $speed
+        if ([Math]::Abs($snapshot.ProgressMs - $expected) -gt 100) { throw 'Receiver extrapolation did not use Spotify playback speed.' }
+        $timedState.IsPlaying = $false
+        if ($snapshot.ProgressMs -ne 5000) { throw 'Stopped/buffering timeline advanced.' }
+    }
+    foreach ($percent in @(0, 100)) {
+        $state.volume_percent = $percent
+        if ((Post-State $state).StatusCode -ne 204) { throw "Valid volume $percent was rejected." }
+        if (((Invoke-WebRequest "$base/state").Content | ConvertFrom-Json).volume_percent -ne $percent) {
+            throw 'Stored volume is incorrect.'
+        }
+    }
+    $state.volume_percent = 37
     if ((Post-State $state).StatusCode -ne 204) { throw 'Valid state was rejected.' }
     $enqueue = $server.GetMethod('EnqueueCommand', $flags)
     if (-not $enqueue.Invoke($null, @('seek', [Nullable[int]]::new(12000)))) { throw 'Command was not queued.' }
@@ -91,11 +122,40 @@ try {
         $shuffleArgs = [object[]]::new(1)
         $shuffleArgs[0] = [object[]]@($shuffleRequest)
         if ($readShuffle.Invoke($null, $shuffleArgs) -ne 1) { throw 'Hook did not read PlayerShuffleRequest.State.' }
+        $control = $patch.GetMethod('ControlPrefix', $flags)
+        $volumeMethod = [SpotifyAPI.Web.PlayerClient].GetMethod('SetVolume')
+        foreach ($percent in @(37, 0, 100)) {
+            $volumeArgs = [object[]]@($volumeMethod, [object[]]@([SpotifyAPI.Web.PlayerVolumeRequest]::new($percent)), $null)
+            if ($control.Invoke($null, $volumeArgs)) { throw 'Volume request was not intercepted.' }
+            $volumeTask = $volumeArgs[2]
+            $volumeCommands = (Invoke-WebRequest "$base/commands" -Headers @{ Origin = $origin }).Content | ConvertFrom-Json
+            if ($volumeCommands.Count -ne 1 -or $volumeCommands[0].name -ne 'volume' -or $volumeCommands[0].value -ne $percent) {
+                throw 'SDK volume request was not queued correctly.'
+            }
+            $result = @{ id = $volumeCommands[0].id; name = 'volume'; success = ($percent -ne 100) }
+            Invoke-WebRequest "$base/control-result" -Method Post -Headers @{ Origin = $origin } -ContentType 'application/json' -Body ($result | ConvertTo-Json -Compress) | Out-Null
+            if ($volumeTask.GetAwaiter().GetResult() -ne ($percent -ne 100)) { throw 'Hook did not propagate volume result.' }
+        }
+        foreach ($percent in @(-1, 101)) {
+            $volumeArgs = [object[]]@($volumeMethod, [object[]]@([SpotifyAPI.Web.PlayerVolumeRequest]::new($percent)), $null)
+            $control.Invoke($null, $volumeArgs) | Out-Null
+            if ($volumeArgs[2].GetAwaiter().GetResult()) { throw 'Invalid SDK volume was accepted.' }
+        }
+        $volumeArgs = [object[]]@($volumeMethod, [object[]]@([SpotifyAPI.Web.PlayerVolumeRequest]::new(37)), $null)
+        $control.Invoke($null, $volumeArgs) | Out-Null
+        if ($volumeArgs[2].GetAwaiter().GetResult()) { throw 'Unanswered volume request succeeded.' }
+        if ($server.GetMethod('TakeCommands', $flags).Invoke($null, @()).Length -ne 0) {
+            throw 'Expired volume request would execute after reconnection.'
+        }
     }
     $metadataCache = $hook.GetType('SpotifyMetadataCache', $true)
-    $sampleMetadata = 'prefix USUG11600998a' + (('x' * 150) -join '') + 'spotify:track:37F0uwRSrdzkBiuj0D5UHI'
+    $sampleMetadata = 'prefix isrc' + [char]0 + 'USUG11600998' + (('x' * 150) -join '') + 'spotify:track:37F0uwRSrdzkBiuj0D5UHI'
     $nearbyIsrc = $metadataCache.GetMethod('FindNearbyIsrc', $flags).Invoke($null, @($sampleMetadata, 170))
     if ($nearbyIsrc -ne 'USUG11600998') { throw 'Nearby ISRC association is incorrect.' }
+    $unlabelled = 'prefix USUG11600998' + (('x' * 150) -join '') + 'spotify:track:37F0uwRSrdzkBiuj0D5UHI'
+    if ($metadataCache.GetMethod('FindNearbyIsrc', $flags).Invoke($null, @($unlabelled, 170)) -ne $null) {
+        throw 'Unlabelled alphanumeric text was accepted as ISRC.'
+    }
     $state.is_playing = $false
     $state.progress_ms = 9000
     if ((Post-State $state).StatusCode -ne 204) { throw 'Pause update was rejected.' }

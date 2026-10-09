@@ -9,16 +9,37 @@
   let commandsPending = false;
   let warned = false;
   let player = null;
+  let playback = null;
   let library = null;
   let cosmos = null;
   let registry = null;
   let latestState = null;
   let queued = false;
   const isrcFallbackCache = new Map();
+  const isrcRetryMs = 15000;
 
   function resolve(name) {
     const token = [...(registry?._map?.keys() ?? [])].find((key) => key?.description === name);
     return token ? registry.resolve(token) : null;
+  }
+
+  function getPlayback() {
+    if (!playback) {
+      const service = resolve("PlaybackAPI");
+      if (!service?.getVolume || !service?.setVolume) return null;
+      playback = service;
+      playback.getEvents?.().addListener?.("volume", publish);
+    }
+    return playback;
+  }
+
+  async function readVolume() {
+    try {
+      const volume = await getPlayback()?.getVolume();
+      return Number.isFinite(volume) && volume >= 0 && volume <= 1 ? Math.round(volume * 100) : null;
+    } catch {
+      return null;
+    }
   }
 
   window.__spotifyLocalBridgeStart = (services) => {
@@ -69,6 +90,20 @@
 
   async function executeCommand(command) {
     if (!command || typeof command.name !== "string") return;
+    if (command.name === "volume") {
+      try {
+        if (!Number.isInteger(command.value) || command.value < 0 || command.value > 100)
+          throw new Error("Invalid volume percent");
+        const service = getPlayback();
+        if (!service || await readVolume() === null) throw new Error("PlaybackAPI volume is unavailable");
+        await service.setVolume(command.value / 100);
+        await reportControl(command.name, true, null, command.id);
+        publish();
+      } catch (error) {
+        await reportControl(command.name, false, error?.message ?? String(error), command.id);
+      }
+      return;
+    }
     if (command.name === "library-check" || command.name === "library-add" || command.name === "library-remove") {
       library ??= resolve("LibraryAPI");
       const uris = Array.isArray(command.uris) ? command.uris.filter((uri) => typeof uri === "string") : [];
@@ -189,9 +224,14 @@
     const trackId = typeof item?.uri === "string" ? item.uri.split(":").pop() : null;
     cosmos ??= player?._cosmos ?? resolve("Cosmos");
     if (!trackId || !cosmos?.get) return null;
-    if (isrcFallbackCache.has(trackId)) return isrcFallbackCache.get(trackId);
+    const cached = isrcFallbackCache.get(trackId);
+    if (cached && (cached.value || Date.now() - cached.at < isrcRetryMs)) return cached.promise;
     const lookup = (async () => {
-      for (const url of [`sp://metadata/track/${trackId}`, `https://api.spotify.com/v1/tracks/${trackId}`]) {
+      for (const url of [
+        `hm://metadata/4/track/${trackId}`,
+        `sp://metadata/track/${trackId}`,
+        `https://api.spotify.com/v1/tracks/${trackId}`,
+      ]) {
         try {
           const metadata = await Promise.race([
             cosmos.get(url),
@@ -203,7 +243,14 @@
       }
       return null;
     })();
-    isrcFallbackCache.set(trackId, lookup);
+    const entry = { promise: lookup, value: null, at: Date.now() };
+    isrcFallbackCache.set(trackId, entry);
+    lookup.then((value) => {
+      if (isrcFallbackCache.get(trackId) === entry) {
+        entry.value = value;
+        entry.at = Date.now();
+      }
+    }).catch(() => { });
     return lookup;
   }
 
@@ -214,8 +261,10 @@
     const isrc = await getTrackIsrc(item, meta);
     const artists = item?.artists?.filter((artist) => artist.name) ?? [];
     const duration = Number(state?.duration ?? item?.duration?.milliseconds ?? meta.duration) || 0;
+    const speed = Number(state?.speed ?? 1);
+    const advancing = Boolean(item && state.hasContext && !state.isPaused && !state.isBuffering && speed > 0);
     const progress = item ? (Number(state.positionAsOfTimestamp) || 0)
-      + (state.isPaused ? 0 : Math.max(0, Date.now() - (Number(state.timestamp) || Date.now()))) : 0;
+      + (advancing ? Math.max(0, Date.now() - (Number(state.timestamp) || Date.now())) * speed : 0) : 0;
 
     return {
       track_uri: item?.uri ?? null,
@@ -232,10 +281,12 @@
       is_local: Boolean(item?.isLocal),
       duration_ms: Math.max(0, Math.round(duration)),
       progress_ms: Math.max(0, Math.min(Math.round(progress), duration || Infinity)),
-      is_playing: Boolean(item && !state.isPaused),
+      is_playing: advancing,
+      playback_speed: speed,
       context_uri: state?.context?.uri ?? null,
       shuffle: Boolean(state?.shuffle),
       repeat: Number(state?.repeat) || 0,
+      volume_percent: await readVolume(),
     };
   }
 

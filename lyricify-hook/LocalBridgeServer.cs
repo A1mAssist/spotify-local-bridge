@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 internal sealed record BridgeSnapshot(BridgeState State, long UpdatedAt)
 {
     public int ProgressMs => State.IsPlaying
-        ? (int)Math.Min(State.DurationMs, State.ProgressMs + Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - UpdatedAt))
+        ? (int)Math.Min(State.DurationMs, State.ProgressMs + Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - UpdatedAt) * State.PlaybackSpeed)
         : State.ProgressMs;
 }
 
@@ -139,8 +139,8 @@ internal static class LocalBridgeServer
         var result = new List<BridgeCommand>(MaxCommands);
         while (result.Count < MaxCommands && commands.TryDequeue(out var command))
         {
-            result.Add(command);
             commandSignal.Wait(0);
+            if (command.Id == null || PendingRequests.ContainsKey(command.Id)) result.Add(command);
         }
         return result.ToArray();
     }
@@ -343,8 +343,10 @@ internal static class LocalBridgeServer
             && Optional(state.ImageUrl, 1024)
             && state.DurationMs is >= 0 and <= 43_200_000
             && state.ProgressMs is >= 0 and <= 43_200_000
+            && double.IsFinite(state.PlaybackSpeed) && state.PlaybackSpeed is >= 0 and <= 4
             && Optional(state.ContextUri, 512)
-            && state.Repeat is >= 0 and <= 2;
+            && state.Repeat is >= 0 and <= 2
+            && (state.VolumePercent == null || state.VolumePercent is >= 0 and <= 100);
     }
 }
 
@@ -356,10 +358,10 @@ internal static class SpotifyMetadataCache
     private static readonly Regex IsrcField = new(
         @"(?i)isrc[\x00-\x1F\x80-\xFF]{0,64}([A-Z]{2}[A-Z0-9]{3}\d{7})",
         RegexOptions.Compiled);
-    private static readonly Regex IsrcValue = new(
-        @"(?i)([A-Z]{2}[A-Z0-9]{3}\d{7})",
-        RegexOptions.Compiled);
-    private static readonly ConcurrentDictionary<string, Task<string?>> Results = new(StringComparer.Ordinal);
+    private const long RetryAfterMs = 15_000;
+    private static readonly ConcurrentDictionary<string, CacheEntry> Results = new(StringComparer.Ordinal);
+
+    private sealed record CacheEntry(Task<string?> Task, long AttemptedAt);
 
     internal static Task<string?> LookupAsync(string? trackUri)
     {
@@ -367,7 +369,14 @@ internal static class SpotifyMetadataCache
         if (trackUri?.StartsWith(prefix, StringComparison.Ordinal) != true) return Task.FromResult<string?>(null);
         var trackId = trackUri[prefix.Length..];
         if (trackId.Length is < 10 or > 64) return Task.FromResult<string?>(null);
-        return Results.GetOrAdd(trackId, static id => Task.Run(() => Lookup(id)));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (Results.TryGetValue(trackId, out var cached)
+            && now - cached.AttemptedAt < RetryAfterMs)
+            return cached.Task;
+
+        var entry = new CacheEntry(Task.Run(() => Lookup(trackId)), now);
+        Results[trackId] = entry;
+        return entry.Task;
     }
 
     private static string? Lookup(string trackId)
@@ -437,13 +446,6 @@ internal static class SpotifyMetadataCache
         }
         if (best != null) return best.Groups[1].Value.ToUpperInvariant();
 
-        foreach (Match match in IsrcValue.Matches(window))
-        {
-            var distance = Math.Abs(from + match.Index - trackOffset);
-            if (distance <= AssociationRadius
-                && (best == null || distance < Math.Abs(from + best.Index - trackOffset)))
-                best = match;
-        }
-        return best?.Groups[1].Value.ToUpperInvariant();
+        return null;
     }
 }

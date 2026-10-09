@@ -16,6 +16,9 @@ const player = {
     },
     duration: 253000,
     isPaused: false,
+    isBuffering: false,
+    hasContext: true,
+    speed: 1,
     timestamp: Date.now(),
     positionAsOfTimestamp: 5000,
     context: { uri: "spotify:album:abc" },
@@ -27,6 +30,7 @@ let cosmosCalls = 0;
 let tick;
 let commandTick;
 let update;
+let volumeUpdate;
 const actions = [];
 const commandQueue = [];
 const controlResults = [];
@@ -53,8 +57,25 @@ const library = {
   add: async ({ uris }) => libraryCalls.push(["add", ...uris]),
   remove: async ({ uris }) => libraryCalls.push(["remove", ...uris]),
 };
+const playback = {
+  volume: 0.37,
+  getVolume() { return this.volume; },
+  async setVolume(volume) {
+    assert.equal(this, playback);
+    this.volume = volume;
+    actions.push(`volume:${volume}`);
+    volumeUpdate();
+  },
+  getEvents() {
+    return { addListener(name, callback) {
+      assert.equal(name, "volume");
+      volumeUpdate = callback;
+    } };
+  },
+};
 const cosmos = { get: async (url) => {
   cosmosCalls++;
+  if (metadataMode === "none") return {};
   if (metadataMode === "api") {
     if (url.startsWith("sp://")) return {};
     return { external_ids: { isrc: "GBUM71703861" } };
@@ -69,8 +90,10 @@ const registry = {
   resolve(token) { return this._map.get(token); },
 };
 const window = {};
+let bridgeNow = Date.now();
 vm.runInNewContext(extension, {
   window,
+  Date: class extends Date { static now() { return bridgeNow; } },
   AbortController,
   setTimeout,
   clearTimeout,
@@ -99,6 +122,11 @@ assert.equal(messages[0].artist_uris[0], player._state.item.artists[0].uri);
 assert.equal(messages[0].album_uri, player._state.item.album.uri);
 assert.equal(messages[0].isrc, null);
 assert.equal(messages[0].image_url, "spotify:image:abc");
+assert.equal(messages[0].volume_percent, null);
+registry._map.set(Symbol.for("PlaybackAPI"), playback);
+tick();
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).volume_percent, 37);
 commandQueue.push(
   { name: "pause" },
   { name: "resume" },
@@ -122,6 +150,49 @@ assert.deepEqual(controlResults.filter((result) => result.id).map((result) => [r
   ["check-1", true], ["add-1", true], ["remove-1", true],
 ]);
 assert.deepEqual(controlResults.find((result) => result.id === "check-1").values, [true, false]);
+for (const percent of [37, 0, 100]) {
+  commandQueue.push({ name: "volume", value: percent, id: `volume-${percent}` });
+  await commandTick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(actions.at(-1), `volume:${percent / 100}`);
+  assert.equal(messages.at(-1).volume_percent, percent);
+  assert.equal(controlResults.at(-1).id, `volume-${percent}`);
+  assert.equal(controlResults.at(-1).success, true);
+}
+const actionCount = actions.length;
+for (const percent of [-1, 101, null, 0.5]) {
+  commandQueue.push({ name: "volume", value: percent, id: "invalid-volume" });
+  await commandTick();
+  assert.equal(controlResults.at(-1).id, "invalid-volume");
+  assert.equal(controlResults.at(-1).success, false);
+}
+assert.equal(actions.length, actionCount);
+playback.volume = -1;
+volumeUpdate();
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).volume_percent, null);
+commandQueue.push({ name: "volume", value: 37, id: "unavailable-volume" });
+await commandTick();
+assert.equal(controlResults.at(-1).success, false);
+assert.equal(actions.length, actionCount);
+playback.getVolume = () => { throw new Error("Unavailable device"); };
+volumeUpdate();
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).volume_percent, null);
+assert.equal(messages.at(-1).track_uri, player._state.item.uri);
+playback.getVolume = function () { return this.volume; };
+playback.volume = 0.37;
+volumeUpdate();
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).volume_percent, 37);
+const setVolume = playback.setVolume;
+playback.setVolume = async () => { throw new Error("Volume RPC failed"); };
+commandQueue.push({ name: "volume", value: 0, id: "failed-volume" });
+await commandTick();
+assert.equal(controlResults.at(-1).id, "failed-volume");
+assert.equal(controlResults.at(-1).success, false);
+assert.equal(playback.volume, 0.37);
+playback.setVolume = setVolume;
 registry._map.set(Symbol.for("Cosmos"), cosmos);
 tick();
 await new Promise((resolve) => setImmediate(resolve));
@@ -138,7 +209,21 @@ metadataMode = "api";
 update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6" } } });
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).isrc, "GBUM71703861");
-assert.equal(cosmosCalls, 3);
+assert.equal(cosmosCalls, 2);
+metadataMode = "none";
+const retryTrack = "spotify:track:retry000000000000000000";
+update({ data: { ...player._state, item: { ...player._state.item, uri: retryTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).isrc, null);
+const firstMissCalls = cosmosCalls;
+update({ data: { ...player._state, item: { ...player._state.item, uri: retryTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(cosmosCalls, firstMissCalls);
+bridgeNow += 16000;
+update({ data: { ...player._state, item: { ...player._state.item, uri: retryTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.ok(cosmosCalls > firstMissCalls);
+metadataMode = "api";
 holdFetch = true;
 tick();
 await new Promise((resolve) => setImmediate(resolve));
@@ -147,4 +232,20 @@ releaseFetch();
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).progress_ms, 20000);
 assert.equal(messages.at(-1).is_playing, false);
+bridgeNow = Date.now();
+for (const [overrides, expected, playing] of [
+  [{ speed: 1 }, 52000, true],
+  [{ speed: 0.5 }, 51000, true],
+  [{ speed: 2 }, 54000, true],
+  [{ isPaused: true }, 50000, false],
+  [{ isBuffering: true }, 50000, false],
+  [{ hasContext: false }, 50000, false],
+  [{ speed: 0 }, 50000, false],
+]) {
+  update({ data: { ...player._state, positionAsOfTimestamp: 50000, timestamp: bridgeNow - 2000, ...overrides } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(messages.at(-1).progress_ms, expected);
+  assert.equal(messages.at(-1).is_playing, playing);
+  assert.equal(messages.at(-1).playback_speed, overrides.speed ?? 1);
+}
 console.log("Spotify XPUI checks passed");
