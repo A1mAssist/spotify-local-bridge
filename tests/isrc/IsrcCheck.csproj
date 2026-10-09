@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+    <HookPath Condition="'$(HookPath)' == ''">$(MSBuildThisFileDirectory)../../lyricify-hook/bin/Release/net6.0/StartupHook.dll</HookPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="StartupHook"><HintPath>$(HookPath)</HintPath></Reference>
+    <Reference Include="SpotifyAPI.Web"><HintPath>$(SpotifyApiDll)</HintPath></Reference>
+  </ItemGroup>
+</Project>

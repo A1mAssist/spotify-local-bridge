@@ -50,6 +50,8 @@ public static class StartupHook
 
 internal static class PlaybackPatch
 {
+    private static int trackInfoRefreshPending;
+
     public static void Install()
     {
         var harmony = new Harmony("app.lyricify.spotify-local-bridge.playback");
@@ -328,7 +330,11 @@ internal static class PlaybackPatch
         {
             var snapshot = LocalBridgeServer.Read();
             var playback = Map(snapshot?.State);
-            if (playback != null) playback.ProgressMs = snapshot!.ProgressMs;
+            if (playback != null)
+            {
+                playback.ProgressMs = snapshot!.ProgressMs;
+                RefreshTrackInfo((FullTrack)playback.Item);
+            }
             return Task.FromResult<CurrentlyPlayingContext>(playback!);
         }
         catch (Exception error)
@@ -336,6 +342,60 @@ internal static class PlaybackPatch
             StartupHook.Log($"BRIDGE ERROR: {error.GetType().Name}");
             return Task.FromResult<CurrentlyPlayingContext>(null!);
         }
+    }
+
+    private static void RefreshTrackInfo(FullTrack track)
+    {
+        if (track.ExternalIds?.TryGetValue("isrc", out var isrc) != true || string.IsNullOrEmpty(isrc)
+            || Interlocked.Exchange(ref trackInfoRefreshPending, 1) != 0) return;
+        try
+        {
+            var application = Type.GetType("System.Windows.Application, PresentationFramework")
+                ?.GetProperty("Current")?.GetValue(null);
+            var dispatcher = application?.GetType().GetProperty("Dispatcher")?.GetValue(application);
+            var beginInvoke = dispatcher?.GetType().GetMethod("BeginInvoke", new[] { typeof(Delegate), typeof(object[]) });
+            if (beginInvoke == null)
+            {
+                Interlocked.Exchange(ref trackInfoRefreshPending, 0);
+                return;
+            }
+            // The info page copies ISRC only when opened; refresh late metadata on its UI thread.
+            Action refresh = () =>
+            {
+                try
+                {
+                    var mainType = AppDomain.CurrentDomain.GetAssemblies()
+                        .Select(assembly => assembly.GetType("Lyricify_for_Spotify.MainWindow", false))
+                        .FirstOrDefault(type => type != null);
+                    var main = mainType?.GetMethod("GetMainWindow", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                    if (main == null) return;
+                    var frame = mainType?.GetField("FrameTrackInfo", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(main);
+                    var page = frame?.GetType().GetProperty("Content")?.GetValue(frame);
+                    if (UpdateTrackInfoPage(page, track.Id, isrc)) StartupHook.Log($"ISRC UI {track.Uri} {isrc}");
+                }
+                catch (Exception error) { StartupHook.Log($"ISRC UI ERROR: {error.GetType().Name}"); }
+                finally { Interlocked.Exchange(ref trackInfoRefreshPending, 0); }
+            };
+            beginInvoke.Invoke(dispatcher, new object[] { refresh, Array.Empty<object>() });
+        }
+        catch (Exception error)
+        {
+            Interlocked.Exchange(ref trackInfoRefreshPending, 0);
+            StartupHook.Log($"ISRC UI ERROR: {error.GetType().Name}");
+        }
+    }
+
+    internal static bool UpdateTrackInfoPage(object? page, string trackId, string isrc)
+    {
+        if (page?.GetType().FullName != "Lyricify_for_Spotify.Pages.PageAudioFeatures") return false;
+        const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        var idBlock = page.GetType().GetField("TextBlock_TrackID", fields)?.GetValue(page);
+        if (idBlock?.GetType().GetProperty("Text")?.GetValue(idBlock) as string != trackId) return false;
+        var isrcBlock = page.GetType().GetField("TextBlock_TrackISRC", fields)?.GetValue(page);
+        var text = isrcBlock?.GetType().GetProperty("Text");
+        if (text == null || text.GetValue(isrcBlock) as string == isrc) return false;
+        text.SetValue(isrcBlock, isrc);
+        return true;
     }
 
     internal static CurrentlyPlayingContext Map(BridgeState? state)

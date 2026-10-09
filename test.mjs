@@ -26,7 +26,8 @@ const player = {
     repeat: 0,
   },
 };
-let cosmosCalls = 0;
+let metadataCalls = 0;
+const metadataUrls = [];
 let tick;
 let commandTick;
 let update;
@@ -38,6 +39,7 @@ const libraryCalls = [];
 let holdFetch = false;
 let releaseFetch;
 let metadataMode = "getter";
+let releaseMetadata;
 player._events = { addListener(name, callback) {
   assert.equal(name, "update");
   update = callback;
@@ -73,17 +75,27 @@ const playback = {
     } };
   },
 };
-const cosmos = { get: async (url) => {
-  cosmosCalls++;
-  if (metadataMode === "none") return {};
-  if (metadataMode === "api") {
-    if (url.startsWith("sp://")) return {};
-    return { external_ids: { isrc: "GBUM71703861" } };
-  }
-  const metadata = Object.create({
-    get external_id() { return [{ type: "isrc", id: "US-UM7-17-03861" }]; },
-  });
-  return metadata;
+const requestBuilder = { build() {
+  let host;
+  let path;
+  return {
+    withHost(value) { host = value; return this; },
+    withPath(value) { path = value; return this; },
+    withEndpointIdentifier(value) { assert.equal(value, "/metadata/4/track/{gid}"); return this; },
+    withAbortSignal(value) { assert.equal(value.aborted, false); return this; },
+    async send() {
+      assert.equal(host, "https://spclient.wg.spotify.com");
+      metadataCalls++;
+      metadataUrls.push(host + path);
+      if (metadataMode === "delayed") return new Promise((resolve) => { releaseMetadata = (body) => resolve({ body }); });
+      if (metadataMode === "none") return { body: {} };
+      if (metadataMode === "api") return { body: { external_id: [{ type: "isrc", id: "GBUM71703861" }] } };
+      const body = Object.create({
+        get external_id() { return [{ type: "isrc", id: "US-UM7-17-03861" }]; },
+      });
+      return { body };
+    },
+  };
 } };
 const registry = {
   _map: new Map([[Symbol.for("PlayerAPI"), player], [Symbol.for("LibraryAPI"), library]]),
@@ -95,7 +107,7 @@ vm.runInNewContext(extension, {
   window,
   Date: class extends Date { static now() { return bridgeNow; } },
   AbortController,
-  setTimeout,
+  setTimeout: (callback, delay) => delay === 5000 ? (queueMicrotask(callback), 0) : setTimeout(callback, delay),
   clearTimeout,
   setInterval: (callback, delay) => { if (delay === 100) commandTick = callback; else tick = callback; },
   fetch: async (_url, options = {}) => {
@@ -104,6 +116,7 @@ vm.runInNewContext(extension, {
       controlResults.push(JSON.parse(options.body));
       return { ok: true };
     }
+    assert.equal(options.signal?.aborted, false, "Metadata lookup must not consume the playback request timeout");
     messages.push(JSON.parse(options.body));
     if (holdFetch) {
       holdFetch = false;
@@ -193,10 +206,11 @@ assert.equal(controlResults.at(-1).id, "failed-volume");
 assert.equal(controlResults.at(-1).success, false);
 assert.equal(playback.volume, 0.37);
 playback.setVolume = setVolume;
-registry._map.set(Symbol.for("Cosmos"), cosmos);
+registry._map.set(Symbol.for("RequestBuilder"), requestBuilder);
 tick();
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).isrc, "USUM71703861");
+assert.equal(metadataUrls[0], "https://spclient.wg.spotify.com/metadata/4/track/13e54dcaa2a14cac882dacb96fe8f693", "Metadata must use the 128-bit GID, not the base62 track ID");
 update({ data: { ...player._state, isPaused: true, positionAsOfTimestamp: 9000 } });
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).progress_ms, 9000);
@@ -204,25 +218,77 @@ assert.equal(messages.at(-1).is_playing, false);
 update({ data: { ...player._state, isPaused: false, positionAsOfTimestamp: 2000, timestamp: Date.now() } });
 await new Promise((resolve) => setImmediate(resolve));
 assert.ok(messages.at(-1).progress_ms >= 2000 && messages.at(-1).progress_ms < 2100);
-assert.equal(cosmosCalls, 1);
+assert.equal(metadataCalls, 1);
 metadataMode = "api";
 update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6" } } });
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).isrc, "GBUM71703861");
-assert.equal(cosmosCalls, 2);
+assert.equal(metadataCalls, 2);
 metadataMode = "none";
-const retryTrack = "spotify:track:retry000000000000000000";
+update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:3GCdLUSnKSMJhs4Tj6CV3s" } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.ok(metadataUrls.includes("https://spclient.wg.spotify.com/metadata/4/track/7927b778eb7c4124947e6e83aee81d4a"));
+assert.ok(metadataUrls.every((url) => url.startsWith("https://spclient.wg.spotify.com/metadata/4/track/")));
+for (const id of ["0fAkEtRaCk1D0000000abc", "0000000000000000000001", "ZZZZZZZZZZZZZZZZZZZZZZ"]) {
+  const count = metadataUrls.length;
+  update({ data: { ...player._state, item: { ...player._state.item, uri: `spotify:track:${id}` } } });
+  await new Promise((resolve) => setImmediate(resolve));
+  const urls = metadataUrls.slice(count);
+  if (id[0] === "Z") assert.ok(urls.every((url) => !url.includes("metadata/4/track/")), "An overflowing ID must not create an invalid GID");
+  else {
+    const hex = id.startsWith("0f") ? "08428230d7ce24860143a3c2e112acde" : "00000000000000000000000000000001";
+    assert.equal(urls[0], `https://spclient.wg.spotify.com/metadata/4/track/${hex}`);
+  }
+}
+metadataMode = "none";
+const retryTrack = "spotify:track:0000000000000000000002";
 update({ data: { ...player._state, item: { ...player._state.item, uri: retryTrack } } });
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).isrc, null);
-const firstMissCalls = cosmosCalls;
+const firstMissCalls = metadataCalls;
 update({ data: { ...player._state, item: { ...player._state.item, uri: retryTrack } } });
 await new Promise((resolve) => setImmediate(resolve));
-assert.equal(cosmosCalls, firstMissCalls);
+assert.equal(metadataCalls, firstMissCalls);
 bridgeNow += 16000;
 update({ data: { ...player._state, item: { ...player._state.item, uri: retryTrack } } });
 await new Promise((resolve) => setImmediate(resolve));
-assert.ok(cosmosCalls > firstMissCalls);
+assert.equal(metadataCalls, firstMissCalls, "A missing ISRC must not be retried after 15 seconds");
+bridgeNow += 300001;
+update({ data: { ...player._state, item: { ...player._state.item, uri: retryTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.ok(metadataCalls > firstMissCalls);
+metadataMode = "delayed";
+const delayedTrack = "spotify:track:0000000000000000000003";
+update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).track_uri, delayedTrack, "Playback must publish before a slow ISRC lookup finishes");
+assert.equal(messages.at(-1).isrc, null);
+update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack }, isPaused: true, positionAsOfTimestamp: 17000 } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).is_playing, false, "Pause updates must not wait for ISRC");
+releaseMetadata({ external_ids: { isrc: "USUM71703861" } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).track_uri, delayedTrack);
+assert.equal(messages.at(-1).isrc, "USUM71703861", "Late metadata must trigger a fresh snapshot");
+update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:0000000000000000000004" } } });
+await new Promise((resolve) => setImmediate(resolve));
+const releaseOldTrack = releaseMetadata;
+update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+releaseOldTrack({ external_ids: { isrc: "GBUM71703861" } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.at(-1).track_uri, delayedTrack);
+assert.equal(messages.at(-1).isrc, "USUM71703861", "A previous track's late metadata must not replace the active ISRC");
+metadataMode = "none";
+const skipTrack = "spotify:track:0000000000000000000005";
+const beforeSkip = metadataCalls;
+update({ data: { ...player._state, item: { ...player._state.item, uri: skipTrack } } });
+update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(metadataCalls, beforeSkip, "A skipped track must not trigger a metadata request");
+update({ data: { ...player._state, item: { ...player._state.item, uri: skipTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(metadataCalls, beforeSkip + 1, "A quickly revisited track must not inherit a negative cache entry");
 metadataMode = "api";
 holdFetch = true;
 tick();
@@ -248,4 +314,8 @@ for (const [overrides, expected, playing] of [
   assert.equal(messages.at(-1).is_playing, playing);
   assert.equal(messages.at(-1).playback_speed, overrides.speed ?? 1);
 }
+const beforeEpisode = metadataCalls;
+update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:episode:0BxE4FqsDD1Ot4YuBXwAPp" } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(metadataCalls, beforeEpisode, "Episodes must not request track metadata");
 console.log("Spotify XPUI checks passed");

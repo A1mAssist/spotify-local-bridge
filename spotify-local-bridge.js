@@ -11,12 +11,12 @@
   let player = null;
   let playback = null;
   let library = null;
-  let cosmos = null;
+  let requestBuilder = null;
   let registry = null;
   let latestState = null;
   let queued = false;
   const isrcFallbackCache = new Map();
-  const isrcRetryMs = 15000;
+  const isrcRetryMs = 300000;
 
   function resolve(name) {
     const token = [...(registry?._map?.keys() ?? [])].find((key) => key?.description === name);
@@ -48,7 +48,7 @@
     const connect = () => {
       try {
         player = resolve("PlayerAPI");
-        cosmos = player?._cosmos ?? resolve("Cosmos");
+        requestBuilder = resolve("RequestBuilder");
         if (!player?._state) player = null;
       } catch {
         player = null;
@@ -210,7 +210,16 @@
     return null;
   }
 
-  async function getTrackIsrc(item, meta) {
+  function trackGid(trackId) {
+    if (!/^[0-9A-Za-z]{22}$/.test(trackId)) return null;
+    const alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let value = 0n;
+    for (const character of trackId) value = value * 62n + BigInt(alphabet.indexOf(character));
+    const hex = value.toString(16);
+    return hex.length <= 32 ? hex.padStart(32, "0") : null;
+  }
+
+  function getTrackIsrc(item, meta) {
     const direct = [meta.isrc, meta.isrc_id, meta.track_isrc, item?.isrc,
       item?.external_ids?.isrc].map(cleanIsrc).find(Boolean);
     if (direct) return direct;
@@ -221,44 +230,51 @@
     }
     const embedded = findIsrc(meta) || findIsrc(item);
     if (embedded) return embedded;
-    const trackId = typeof item?.uri === "string" ? item.uri.split(":").pop() : null;
-    cosmos ??= player?._cosmos ?? resolve("Cosmos");
-    if (!trackId || !cosmos?.get) return null;
+    const trackId = typeof item?.uri === "string" && item.uri.startsWith("spotify:track:")
+      ? item.uri.slice("spotify:track:".length) : null;
+    requestBuilder ??= resolve("RequestBuilder");
+    if (!/^[0-9A-Za-z]{22}$/.test(trackId ?? "") || !requestBuilder?.build) return null;
     const cached = isrcFallbackCache.get(trackId);
-    if (cached && (cached.value || Date.now() - cached.at < isrcRetryMs)) return cached.promise;
+    if (cached && (cached.value || Date.now() - cached.at < isrcRetryMs)) return cached.value;
+    const gid = trackGid(trackId);
+    if (!gid) return null;
     const lookup = (async () => {
-      for (const url of [
-        `hm://metadata/4/track/${trackId}`,
-        `sp://metadata/track/${trackId}`,
-        `https://api.spotify.com/v1/tracks/${trackId}`,
-      ]) {
-        try {
-          const metadata = await Promise.race([
-            cosmos.get(url),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Cosmos timeout")), 1500)),
-          ]);
-          const isrc = findIsrc(metadata);
-          if (isrc) return isrc;
-        } catch { }
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      if (latestState?.item?.uri !== item.uri) return undefined;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      try {
+        const response = await requestBuilder.build().withHost("https://spclient.wg.spotify.com")
+          .withPath(`/metadata/4/track/${gid}`).withEndpointIdentifier("/metadata/4/track/{gid}")
+          .withAbortSignal(controller.signal).send();
+        return findIsrc(response.body);
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timeout);
       }
-      return null;
     })();
-    const entry = { promise: lookup, value: null, at: Date.now() };
+    const entry = { value: null, at: Date.now() };
     isrcFallbackCache.set(trackId, entry);
     lookup.then((value) => {
       if (isrcFallbackCache.get(trackId) === entry) {
+        if (value === undefined) {
+          isrcFallbackCache.delete(trackId);
+          return;
+        }
         entry.value = value;
         entry.at = Date.now();
+        if (value && latestState?.item?.uri === item.uri) publish();
       }
     }).catch(() => { });
-    return lookup;
+    return null;
   }
 
   async function snapshot() {
     const state = latestState;
     const item = state?.item;
     const meta = item?.metadata ?? {};
-    const isrc = await getTrackIsrc(item, meta);
+    const isrc = getTrackIsrc(item, meta);
     const artists = item?.artists?.filter((artist) => artist.name) ?? [];
     const duration = Number(state?.duration ?? item?.duration?.milliseconds ?? meta.duration) || 0;
     const speed = Number(state?.speed ?? 1);
