@@ -148,14 +148,11 @@ try {
             throw 'Expired volume request would execute after reconnection.'
         }
     }
-    $metadataCache = $hook.GetType('SpotifyMetadataCache', $true)
-    $sampleMetadata = 'prefix isrc' + [char]0 + 'USUG11600998' + (('x' * 150) -join '') + 'spotify:track:37F0uwRSrdzkBiuj0D5UHI'
-    $nearbyIsrc = $metadataCache.GetMethod('FindNearbyIsrc', $flags).Invoke($null, @($sampleMetadata, 170))
-    if ($nearbyIsrc -ne 'USUG11600998') { throw 'Nearby ISRC association is incorrect.' }
-    $unlabelled = 'prefix USUG11600998' + (('x' * 150) -join '') + 'spotify:track:37F0uwRSrdzkBiuj0D5UHI'
-    if ($metadataCache.GetMethod('FindNearbyIsrc', $flags).Invoke($null, @($unlabelled, 170)) -ne $null) {
-        throw 'Unlabelled alphanumeric text was accepted as ISRC.'
-    }
+    $state.isrc = $null
+    if ((Post-State $state).StatusCode -ne 204) { throw 'State without ISRC was rejected.' }
+    $noIsrc = (Invoke-WebRequest "$base/state").Content | ConvertFrom-Json
+    if ($null -ne $noIsrc.isrc) { throw 'Missing ISRC was filled outside Spotify XPUI.' }
+    $state.isrc = 'USUM71703861'
     $state.is_playing = $false
     $state.progress_ms = 9000
     if ((Post-State $state).StatusCode -ne 204) { throw 'Pause update was rejected.' }

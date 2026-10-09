@@ -17,6 +17,7 @@
   let queued = false;
   const isrcFallbackCache = new Map();
   const isrcRetryMs = 300000;
+  const isrcErrorRetryMs = 15000;
 
   function resolve(name) {
     const token = [...(registry?._map?.keys() ?? [])].find((key) => key?.description === name);
@@ -219,7 +220,7 @@
     return hex.length <= 32 ? hex.padStart(32, "0") : null;
   }
 
-  function getTrackIsrc(item, meta) {
+  async function getTrackIsrc(item, meta) {
     const direct = [meta.isrc, meta.isrc_id, meta.track_isrc, item?.isrc,
       item?.external_ids?.isrc].map(cleanIsrc).find(Boolean);
     if (direct) return direct;
@@ -235,46 +236,60 @@
     requestBuilder ??= resolve("RequestBuilder");
     if (!/^[0-9A-Za-z]{22}$/.test(trackId ?? "") || !requestBuilder?.build) return null;
     const cached = isrcFallbackCache.get(trackId);
-    if (cached && (cached.value || Date.now() - cached.at < isrcRetryMs)) return cached.value;
+    if (cached && (cached.value || Date.now() - cached.at < isrcRetryMs)) return cached.promise;
     const gid = trackGid(trackId);
     if (!gid) return null;
+    let retryMs = isrcRetryMs;
     const lookup = (async () => {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      if (latestState?.item?.uri !== item.uri) return undefined;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
+      let timeout;
+      const deadline = new Promise((resolve) => {
+        timeout = setTimeout(() => { retryMs = isrcErrorRetryMs; controller.abort(); resolve(null); }, 3000);
+      });
       try {
-        const response = await requestBuilder.build().withHost("https://spclient.wg.spotify.com")
-          .withPath(`/metadata/4/track/${gid}`).withEndpointIdentifier("/metadata/4/track/{gid}")
-          .withAbortSignal(controller.signal).send();
-        return findIsrc(response.body);
-      } catch {
+        for (const delay of [0, 150, 350, 700, 1200]) {
+          if (delay) await Promise.race([new Promise((resolve) => setTimeout(resolve, delay)), deadline]);
+          if (controller.signal.aborted) return null;
+          try {
+            const response = await Promise.race([
+              requestBuilder.build().withHost("https://spclient.wg.spotify.com")
+                .withPath(`/metadata/4/track/${gid}`).withEndpointIdentifier("/metadata/4/track/{gid}")
+                .withAbortSignal(controller.signal).send(),
+              deadline,
+            ]);
+            if (!response) return null;
+            return findIsrc(response.body);
+          } catch (error) {
+            if (error?.name !== "DUPLICATE_REQUEST_ERROR") {
+              if (Number(error?.status) !== 429) retryMs = isrcErrorRetryMs;
+              return null;
+            }
+          }
+        }
+        retryMs = isrcErrorRetryMs;
         return null;
       } finally {
         clearTimeout(timeout);
       }
     })();
-    const entry = { value: null, at: Date.now() };
+    const entry = { promise: lookup, value: null, at: Date.now() };
     isrcFallbackCache.set(trackId, entry);
     lookup.then((value) => {
       if (isrcFallbackCache.get(trackId) === entry) {
-        if (value === undefined) {
-          isrcFallbackCache.delete(trackId);
-          return;
-        }
         entry.value = value;
-        entry.at = Date.now();
-        if (value && latestState?.item?.uri === item.uri) publish();
+        entry.at = Date.now() - isrcRetryMs + retryMs;
       }
     }).catch(() => { });
-    return null;
+    return lookup;
   }
 
   async function snapshot() {
+    const requestedItem = latestState?.item;
+    const isrc = await getTrackIsrc(requestedItem, requestedItem?.metadata ?? {});
+    if (requestedItem?.uri !== latestState?.item?.uri) return null;
     const state = latestState;
     const item = state?.item;
     const meta = item?.metadata ?? {};
-    const isrc = getTrackIsrc(item, meta);
     const artists = item?.artists?.filter((artist) => artist.name) ?? [];
     const duration = Number(state?.duration ?? item?.duration?.milliseconds ?? meta.duration) || 0;
     const speed = Number(state?.speed ?? 1);
@@ -313,22 +328,27 @@
       return;
     }
     pending = true;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(await snapshot()),
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      warned = false;
+      const state = await snapshot();
+      if (!state) return;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(state),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        warned = false;
+      } finally {
+        clearTimeout(timeout);
+      }
     } catch (error) {
       if (!warned) console.warn("Spotify Local Bridge is waiting for its local server:", error);
       warned = true;
     } finally {
-      clearTimeout(timeout);
       pending = false;
       if (queued) {
         queued = false;

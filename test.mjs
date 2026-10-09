@@ -40,6 +40,7 @@ let holdFetch = false;
 let releaseFetch;
 let metadataMode = "getter";
 let releaseMetadata;
+let duplicateRemaining = 0;
 player._events = { addListener(name, callback) {
   assert.equal(name, "update");
   update = callback;
@@ -88,8 +89,20 @@ const requestBuilder = { build() {
       metadataCalls++;
       metadataUrls.push(host + path);
       if (metadataMode === "delayed") return new Promise((resolve) => { releaseMetadata = (body) => resolve({ body }); });
+      if (metadataMode === "hanging") return new Promise(() => { });
+      if (metadataMode === "rate-limit") {
+        const error = new Error("rate limited");
+        error.status = 429;
+        throw error;
+      }
+      if (metadataMode === "duplicate" && duplicateRemaining-- > 0) {
+        const error = new Error("Already sent this request");
+        error.name = "DUPLICATE_REQUEST_ERROR";
+        throw error;
+      }
       if (metadataMode === "none") return { body: {} };
-      if (metadataMode === "api") return { body: { external_id: [{ type: "isrc", id: "GBUM71703861" }] } };
+      if (metadataMode === "api" || metadataMode === "duplicate")
+        return { body: { external_id: [{ type: "isrc", id: "GBUM71703861" }] } };
       const body = Object.create({
         get external_id() { return [{ type: "isrc", id: "US-UM7-17-03861" }]; },
       });
@@ -107,7 +120,8 @@ vm.runInNewContext(extension, {
   window,
   Date: class extends Date { static now() { return bridgeNow; } },
   AbortController,
-  setTimeout: (callback, delay) => delay === 5000 ? (queueMicrotask(callback), 0) : setTimeout(callback, delay),
+  setTimeout: (callback, delay) => delay < 1500 || (delay === 3000 && metadataMode === "hanging")
+    ? (queueMicrotask(callback), 0) : setTimeout(callback, delay),
   clearTimeout,
   setInterval: (callback, delay) => { if (delay === 100) commandTick = callback; else tick = callback; },
   fetch: async (_url, options = {}) => {
@@ -220,8 +234,10 @@ await new Promise((resolve) => setImmediate(resolve));
 assert.ok(messages.at(-1).progress_ms >= 2000 && messages.at(-1).progress_ms < 2100);
 assert.equal(metadataCalls, 1);
 metadataMode = "api";
+const beforeNewTrack = messages.length;
 update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:6rqhFgbbKwnb9MLmUQDhG6" } } });
 await new Promise((resolve) => setImmediate(resolve));
+assert.equal(messages.length, beforeNewTrack + 1, "The first state for a new track must include its ISRC");
 assert.equal(messages.at(-1).isrc, "GBUM71703861");
 assert.equal(metadataCalls, 2);
 metadataMode = "none";
@@ -259,36 +275,62 @@ await new Promise((resolve) => setImmediate(resolve));
 assert.ok(metadataCalls > firstMissCalls);
 metadataMode = "delayed";
 const delayedTrack = "spotify:track:0000000000000000000003";
+const beforeDelayed = messages.length;
 update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack } } });
 await new Promise((resolve) => setImmediate(resolve));
-assert.equal(messages.at(-1).track_uri, delayedTrack, "Playback must publish before a slow ISRC lookup finishes");
-assert.equal(messages.at(-1).isrc, null);
+assert.equal(messages.length, beforeDelayed, "The first state must wait for the in-flight ISRC lookup");
 update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack }, isPaused: true, positionAsOfTimestamp: 17000 } });
 await new Promise((resolve) => setImmediate(resolve));
-assert.equal(messages.at(-1).is_playing, false, "Pause updates must not wait for ISRC");
+assert.equal(messages.length, beforeDelayed);
 releaseMetadata({ external_ids: { isrc: "USUM71703861" } });
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).track_uri, delayedTrack);
-assert.equal(messages.at(-1).isrc, "USUM71703861", "Late metadata must trigger a fresh snapshot");
+assert.equal(messages.at(-1).isrc, "USUM71703861");
+assert.equal(messages.at(-1).is_playing, false, "The first state must include the latest pause update");
+const beforeStale = messages.length;
 update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:0000000000000000000004" } } });
 await new Promise((resolve) => setImmediate(resolve));
 const releaseOldTrack = releaseMetadata;
 update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack } } });
-await new Promise((resolve) => setImmediate(resolve));
+metadataMode = "api";
 releaseOldTrack({ external_ids: { isrc: "GBUM71703861" } });
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(messages.at(-1).track_uri, delayedTrack);
 assert.equal(messages.at(-1).isrc, "USUM71703861", "A previous track's late metadata must not replace the active ISRC");
-metadataMode = "none";
-const skipTrack = "spotify:track:0000000000000000000005";
-const beforeSkip = metadataCalls;
-update({ data: { ...player._state, item: { ...player._state.item, uri: skipTrack } } });
-update({ data: { ...player._state, item: { ...player._state.item, uri: delayedTrack } } });
+assert.ok(messages.slice(beforeStale).every((state) => state.track_uri !== "spotify:track:0000000000000000000004"),
+  "A skipped track must not be published after its lookup completes");
+metadataMode = "duplicate";
+duplicateRemaining = 2;
+const beforeDuplicate = messages.length;
+const beforeDuplicateCalls = metadataCalls;
+update({ data: { ...player._state, item: { ...player._state.item, uri: "spotify:track:0000000000000000000005" } } });
 await new Promise((resolve) => setImmediate(resolve));
-assert.equal(metadataCalls, beforeSkip, "A skipped track must not trigger a metadata request");
-update({ data: { ...player._state, item: { ...player._state.item, uri: skipTrack } } });
+assert.equal(metadataCalls, beforeDuplicateCalls + 3, "Only a duplicate in-flight client request should be retried");
+assert.equal(messages.length, beforeDuplicate + 1);
+assert.equal(messages.at(-1).isrc, "GBUM71703861");
+metadataMode = "hanging";
+const beforeTimeout = messages.length;
+const timeoutTrack = "spotify:track:0000000000000000000006";
+update({ data: { ...player._state, item: { ...player._state.item, uri: timeoutTrack } } });
 await new Promise((resolve) => setImmediate(resolve));
-assert.equal(metadataCalls, beforeSkip + 1, "A quickly revisited track must not inherit a negative cache entry");
+assert.equal(messages.length, beforeTimeout + 1, "A stuck metadata request must release the first state at the deadline");
+assert.equal(messages.at(-1).isrc, null);
+metadataMode = "api";
+const beforeTimeoutRetry = metadataCalls;
+bridgeNow += 16000;
+update({ data: { ...player._state, item: { ...player._state.item, uri: timeoutTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(metadataCalls, beforeTimeoutRetry + 1, "A timeout must retry before the five-minute missing-ISRC interval");
+assert.equal(messages.at(-1).isrc, "GBUM71703861");
+metadataMode = "rate-limit";
+const rateLimitTrack = "spotify:track:0000000000000000000007";
+update({ data: { ...player._state, item: { ...player._state.item, uri: rateLimitTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+const beforeRateLimitRetry = metadataCalls;
+bridgeNow += 16000;
+update({ data: { ...player._state, item: { ...player._state.item, uri: rateLimitTrack } } });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(metadataCalls, beforeRateLimitRetry, "HTTP 429 must keep the longer retry interval");
 metadataMode = "api";
 holdFetch = true;
 tick();
