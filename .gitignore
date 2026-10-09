@@ -2,6 +2,8 @@ lyricify-hook/obj/
 lyricify-hook/bin/Debug/
 launcher/obj/
 launcher/bin/
+dist/
+/LyricifyLauncher.exe
 tests/**/bin/
 tests/**/obj/
 work/

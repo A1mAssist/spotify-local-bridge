@@ -1,10 +1,17 @@
-# Spotify Local Bridge (Lyricify 4 prototype)
+# Spotify Local Bridge for Lyricify 4
+
+Unofficial Windows integration for Spotify Desktop and Lyricify 4. It is not
+affiliated with either project. The launcher is built for Windows x64 and the
+patch anchors have been checked against Spotify 1.2.89.539 and Lyricify 4.4.0;
+updates may require new compatibility checks. This repository contains no
+Spotify or Lyricify application files. The project is MIT-licensed; bundled
+dependencies have separate notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 This package has three parts. A standalone XPUI script reads Spotify's own `PlayerAPI`, `PlaybackAPI` and `LibraryAPI`, posts playback to `127.0.0.1:48711`, and receives local control commands. A .NET startup hook runs that loopback receiver inside Lyricify, replaces the two `SpotifyAPI.Web.PlayerClient.GetCurrentPlayback` overloads with its in-memory state, and routes playback, shuffle, repeat, volume, saved-track queries, like and unlike commands back to Spotify's own client APIs. `LyricifyLauncher.exe` starts Lyricify with this process-specific hook. No Node service, Spicetify runtime, browser wrapper or Windows media session is needed. The bridge does not handle lyrics or credentials.
 
 Scope: current song, play/pause state, timeline, shuffle/repeat, volume and saved-track state for the active track and queue preload checks. Both Lyricify SDK overloads use `GET /v1/me/player`; the recovered Lyricify assembly has no `GetCurrentlyPlaying` call. Lyrics continue to come from Lyricify's server. Lyricify can still contact Spotify for login and unrelated features.
 
-The hooked process bypasses Lyricify's Media Session initialization and timer entry points. Its Media Session enhancement, timeline correction and timeline correction Plus settings can remain enabled in the saved preferences, but do not control playback or the timeline in that process. This is deliberate: Plus can actively pause and resume playback to refresh Windows' timeline. All bridge state comes from Spotify XPUI. The original Lyricify shortcut still follows the saved preferences when launched without the Hook.
+The hooked process bypasses Lyricify's Media Session initialization and timer entry points. Its Media Session enhancement, timeline correction and timeline correction Plus settings can remain enabled in the saved preferences, but do not control playback or the timeline in that process. This is deliberate: Plus can actively pause and resume playback to refresh Windows' timeline. All bridge state comes from Spotify XPUI. Unmodified Lyricify shortcuts still follow the saved preferences when launched without the Hook.
 
 Volume uses `PlaybackAPI.getVolume()` / `setVolume()` with Spotify's native 0–1 units, converted to Lyricify's 0–100 percent. A valid reading enables Lyricify's slider and mute button; an unavailable reading disables them. Volume events refresh bridge state immediately. Commands return asynchronously and unanswered requests expire after five seconds; queued expired requests are discarded. Spotify's volume setter can return before its native operation finishes, so the reported method result is not proof of the final volume; `/state.volume_percent` supplies the readback.
 
@@ -14,26 +21,26 @@ The first playback state for a new track waits for the ISRC lookup, so Lyricify 
 
 ## Run on Windows
 
-1. Use the desktop Spotify installation from spotify.com and its original `Apps\xpui.spa`. Close Spotify and run `./install.ps1`. On a machine previously modified by Spicetify, pass the original archive explicitly: `./install.ps1 -XpuiArchive "$env:APPDATA\spicetify\Backup\xpui.spa"`. This uses that archive once; Spicetify is not needed afterward. The installer preserves the previous XPUI directory and fails if the inspected Spotify bootstrap has changed. Run `./uninstall.ps1` with Spotify closed to restore the previous directory. If Spotify creates a new `xpui.spa` in the meantime, uninstall stops before changing files so that archive is not overwritten.
-2. Double-click `LyricifyLauncher.exe` from this directory to open the Chinese terminal panel. Press Enter to start Spotify and Lyricify with the Hook. The launcher reuses the saved Lyricify path or detects the normal installation; press L to paste a different EXE path. It requires the .NET 8 Runtime and keeps the selected path and Hook log in `%LOCALAPPDATA%\SpotifyLocalBridge\`. Passing an EXE path as the sole argument still starts that application directly. Close any old Node bridge on port 48711 before launching. The original Lyricify shortcut does not load the Hook.
+1. Use the desktop Spotify installation from spotify.com and keep an original `Apps\xpui.spa` archive. If Spotify was previously modified by Spicetify, provide its original backup archive when the panel asks for one. The installer preserves the previous XPUI directory and checks Spotify's bootstrap before changing files. If Spotify creates a new `xpui.spa` after installation, removal stops before overwriting that archive.
+2. Download `LyricifyLauncher.exe` from the [latest release](https://github.com/A1mAssist/spotify-local-bridge/releases/latest) and run it to open the bridge management panel. Select Install Spotify patch, then enable the Lyricify shortcut. The EXE contains the Hook, its dependencies and the Spotify patch scripts; it extracts them into a versioned `%LOCALAPPDATA%\SpotifyLocalBridge\runtime\` directory on first launch. The release EXE includes its .NET 8 runtime. The panel reuses the saved Lyricify path or detects the normal installation; use Set Lyricify path to choose a different EXE. It keeps the selected path and Hook log in `%LOCALAPPDATA%\SpotifyLocalBridge\`. Passing an EXE path as the sole argument still starts that application and opens the panel. Close any old Node bridge on port 48711 before launching.
 3. Once Lyricify is running, play a track and verify that `http://127.0.0.1:48711/state` returns JSON. HTTP 204 means there is no recent state. The receiver exists only while the hooked Lyricify process runs. As an alternative to the EXE, `./lyricify-hook/run.ps1 -LyricifyExe 'C:\path\to\Lyricify for Spotify.exe'` starts the same Hook; its log path is printed by the script. Look for `PATCHED playback reads, modes, volume, and library controls` and `PATCHED MediaSession timeline enhancement bypass (including Plus)`.
 
-The package includes the compiled .NET 6 Hook, Harmony 2.3.3 and a single-file .NET 8 launcher. To rebuild the Hook against a different Lyricify package, run `dotnet build lyricify-hook/StartupHook.csproj -c Release '-p:SpotifyApiDll=C:\path\to\SpotifyAPI.Web.dll'`. Rebuild the launcher with `dotnet publish launcher/LyricifyLauncher.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=None`; its EXE appears under `launcher/bin/Release/net8.0-windows/win-x64/publish/` and must be placed beside the `lyricify-hook` directory. Run `node test.mjs` for the XPUI script, `./lyricify-hook/check-server.ps1 -SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'` for the embedded receiver and Hook read path, `./lyricify-hook/check-map.ps1 -SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'` for playback mapping, and `./install.ps1 -XpuiArchive 'C:\path\to\xpui.spa' -ValidateOnly` for Spotify bootstrap compatibility.
+Build the one-file release with `./package-single.ps1`, or pass `-SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'` when building against a different Lyricify package. The build output is `dist\LyricifyLauncher.exe`; the EXE is published as a release asset and is not tracked in Git. No sibling project files or .NET 8 Runtime installation are required. The Hook DLL still has to exist on disk while Lyricify loads it, so the EXE extracts its embedded payload locally. Run `node test.mjs` for the XPUI script, `./lyricify-hook/check-server.ps1 -SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'` for the embedded receiver and Hook read path, `./lyricify-hook/check-map.ps1 -SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'` for playback mapping, and `./install.ps1 -XpuiArchive 'C:\path\to\xpui.spa' -ValidateOnly` for Spotify bootstrap compatibility.
 
-## TUI 启动面板
+## TUI launcher panel
 
-面板每两秒读取现有本地状态接口，显示 Spotify、Lyricify、插件连接状态和当前歌曲进度。
+The panel uses a wider left column for bridge management: the current Spotify patch action, the current Lyricify shortcut action, Lyricify path, hook log and Exit. The patch and shortcut labels change with their installed state, so Enter always runs the action shown. Spotify and Lyricify are launched normally outside the panel; the patched Lyricify Start Menu shortcut loads the Hook automatically. The right side groups connection, playback and Start Menu shortcut status; operation results or errors appear below them only when there is a message. A compact layout keeps the selected action visible in narrow terminals. The panel reads the existing local state endpoint about every 250 ms, shows fractional playback-bar cells, and redraws only changed rows. Menu input remains responsive while a state request is pending. View hook log reads the newest 10000 raw entries in the same terminal. Its default Events view hides repeated successful cache, ingest and polling entries; F switches to All and back. Timestamps are shortened and long lines wrap. Up/Down and PgUp/PgDn scroll, Home/End jump, R reloads the file, and Q, Esc or Enter returns to the panel.
 
-| 按键 | 操作 |
+| Key | Action |
 | --- | --- |
-| Enter | 启动；已接入插件时提示可以直接使用，避免重复启动 |
-| L | 粘贴或拖入 Lyricify EXE 路径，保存供以后使用 |
-| G | 用记事本打开插件运行日志 |
-| Q / Esc | 退出面板，Spotify 和 Lyricify 继续运行 |
+| Up/Down, Enter | Choose and run the shown management action |
+| Q / Esc | Exit the panel; running apps stay open |
 
-如果 Lyricify 已从原始快捷方式启动，面板会提示先从托盘完全退出，再按 Enter 加载插件。缺少插件文件、路径错误和本地连接占用也会直接显示中文提示。启动超过 15 秒仍未连接时，会提示查看日志。
+Enable Lyricify shortcut backs up `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Lyricify\Lyricify 4.lnk` to `%LOCALAPPDATA%\SpotifyLocalBridge\Lyricify 4.original.lnk`, then points that shortcut to the EXE in `--launch-only` mode with the selected Lyricify EXE. Double-clicking the patched Start Menu link launches Lyricify with the Hook and closes the launcher without opening the TUI. Restore Lyricify shortcut recovers the backup, provided the link still has our launch mode. Desktop and taskbar shortcuts are separate links and are not changed. Keep the single EXE at its current path while the shortcut is patched.
 
-面板使用 .NET 自带控制台，不依赖网页或额外 TUI 库。无交互终端时输出一次状态后退出；传入 EXE 路径时先执行启动。运行 `dotnet run --project tests/launcher/LauncherCheck.csproj -c Release` 检查状态响应、断连/超时、启动环境和中文文本截断。
+If Lyricify was started without the Hook, exit it from the tray before launching it from the patched shortcut. Missing files, invalid paths and a busy local port are shown in English. Spotify patch installation and removal show confirmation and progress inside the panel, then close both clients and call the existing `install.ps1` / `uninstall.ps1` scripts. `Y` confirms; any other key cancels. Lyricify EXE and missing XPUI archive paths are also entered inside the panel. They first request a normal window close, then force-stop a client that remains open after two seconds; save any app-side changes before using these commands.
+
+The panel uses the built-in .NET console and has no TUI dependency. In a non-interactive terminal it prints one status frame and exits. Run `dotnet run --project tests/launcher/LauncherCheck.csproj -c Release` to check state responses, startup environment, process controls, shortcut backup/restore and both terminal layouts.
 
 ## Verified scope
 
@@ -56,7 +63,7 @@ The recovered authorization flow exchanges a code for a Spotify refresh token, r
 
 For lyric display with an existing valid Lyricify account, the hard startup dependencies are `/v1/me` and `/v1/me/player`. Preventing **all** Spotify Web API traffic also requires handling automatic queue, saved-track and conditional calls or suppressing those features. A first-time login requires a separate identity/bootstrap solution: `Custom API Client` changes OAuth credentials, not the API host. The lyric request itself goes to Lyricify's `/lyrics/get` server with track metadata and Spotify user fields; this bridge does not replace it. The recovered code has a few decompilation errors in auxiliary preload methods, and no logged-in runtime request trace exists yet, so this table is a scoped static call-path inventory rather than an exhaustive request log.
 
-The endpoint mapping comes from the bundled SDK and [SpotifyAPI-NET's PlayerClient](https://github.com/JohnnyCrazy/SpotifyAPI-NET/blob/master/SpotifyAPI.Web/Clients/PlayerClient.cs). Recovered Lyricify code establishes call sites, not actual runtime request counts. The recovered DLL at `../../work/lyricify-audit/slayer-input/Lyricify for Spotify_Slayed.dll` is for static analysis only: the unpacker still reports one resource error and possible code virtualization.
+The endpoint mapping comes from the bundled SDK and [SpotifyAPI-NET's PlayerClient](https://github.com/JohnnyCrazy/SpotifyAPI-NET/blob/master/SpotifyAPI.Web/Clients/PlayerClient.cs). Recovered Lyricify code establishes call sites, not actual runtime request counts. The locally recovered assembly was used only for static analysis; the unpacker reported one resource error and possible code virtualization. That assembly is not distributed in this repository.
 
 ## Validation status
 
