@@ -15,6 +15,8 @@
 
 EXE 已包含 .NET 8 运行时、Hook 及其依赖、Spotify XPUI 脚本和安装/卸载脚本，不需要另装 Node 或 Spicetify 运行环境。首次运行会把这些文件释放到 `%LOCALAPPDATA%\SpotifyLocalBridge\runtime\<构建标识>\`，供 Lyricify 和安装器加载。选定的 Lyricify 路径与 Hook 日志保存在 `%LOCALAPPDATA%\SpotifyLocalBridge\`。如果本机还有占用 48711 端口的旧版 Node 桥接服务，需先关闭它。
 
+原始 Lyricify 快捷方式备份、选定的程序路径、日志及释放出的运行文件统一放在 `%LOCALAPPDATA%\SpotifyLocalBridge\`，与启动器 EXE 的位置无关。新安装的 Spotify XPUI 备份和卸载后保留的补丁目录放在其中的 `backups\` 子目录；旧版留在 Spotify `Apps\.spotify-local-bridge-backups\` 的备份仍可由卸载器恢复。用于识别当前补丁的小型安装清单仍随 Spotify XPUI 保存。移动启动器不会丢失这些数据，但需要在面板中选择 `Repair Lyricify shortcut`，把开始菜单快捷方式更新到新位置。
+
 ### 管理面板
 
 面板左侧集中管理 Spotify 补丁、Lyricify 快捷方式、Lyricify 程序路径与 Hook 日志；右侧显示客户端连接、当前播放和快捷方式状态。状态约每 250 毫秒读取一次，只重绘变化的行。窄终端会切换为紧凑布局。
@@ -30,7 +32,7 @@ EXE 已包含 .NET 8 运行时、Hook 及其依赖、Spotify XPUI 脚本和安�
 
 日志会缩短时间戳并折行显示长消息。安装、移除等需要确认的操作在面板内按 `Y` 确认，其他按键取消。程序路径与缺失的 XPUI 归档路径也在面板内输入。管理操作会先请求客户端正常关闭，两秒后仍未退出才强制结束进程。
 
-`Enable Lyricify shortcut` 会先将 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Lyricify\Lyricify 4.lnk` 备份到 `%LOCALAPPDATA%\SpotifyLocalBridge\Lyricify 4.original.lnk`，再把该快捷方式指向启动器的 `--launch-only` 模式。`Restore Lyricify shortcut` 会在快捷方式仍由本项目管理时恢复原件。修改后请不要移动 EXE，否则需要从面板修复快捷方式。如果 Lyricify 已经从未加载 Hook 的入口启动，请先从托盘彻底退出，再使用修改后的快捷方式。
+`Enable Lyricify shortcut` 会先将 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Lyricify\Lyricify 4.lnk` 备份到 `%LOCALAPPDATA%\SpotifyLocalBridge\Lyricify 4.original.lnk`，再把该快捷方式指向启动器的 `--launch-only` 模式。`Restore Lyricify shortcut` 会在快捷方式仍由本项目管理时恢复原件。移动 EXE 后，从新位置运行它，再在面板中选择 `Repair Lyricify shortcut` 更新开始菜单链接。如果 Lyricify 已经从未加载 Hook 的入口启动，请先从托盘彻底退出，再使用修改后的快捷方式。
 
 也可以向 EXE 传入一个 Lyricify 程序路径：它会先启动该程序，再打开面板。开发者还可使用 `.\lyricify-hook\run.ps1 -LyricifyExe 'C:\path\to\Lyricify for Spotify.exe'` 单独启动 Hook；运行日志位置由脚本输出。日志中的 `PATCHED playback reads, modes, volume, and library controls` 与 `PATCHED MediaSession timeline enhancement bypass (including Plus)` 表示相应补丁已安装。
 
@@ -87,6 +89,7 @@ dotnet run --project tests/launcher/LauncherCheck.csproj -c Release
 dotnet run --project tests/isrc/IsrcCheck.csproj -c Release '-p:SpotifyApiDll=C:\path\to\SpotifyAPI.Web.dll' "-p:HookPath=$hook"
 dotnet run --project tests/media-session/MediaSessionCheck.csproj -c Release '-p:SpotifyApiDll=C:\path\to\SpotifyAPI.Web.dll' "-p:HookPath=$hook"
 .\install.ps1 -XpuiArchive 'C:\path\to\xpui.spa' -ValidateOnly
+.\tests\storage\check.ps1
 ```
 
 测试覆盖音量 0、37、100%、无效值、不可用设备、RPC 失败和过期命令；接收器检查音量边界并映射 `Device.SupportsVolume` / `VolumePercent`。测试还通过 Hook 前缀发送真实的 SDK `PlayerVolumeRequest`，检查结果传递。.NET 6 Harmony 测试验证媒体会话初始化和轮询被跳过，以及暂停、继续、切歌、拖动进度的回退路径。该测试使用恢复出的公开辅助方法形态；受保护的 Lyricify 程序集需在部署时另行验证。Lyricify 当前使用的 .NET 6 目标框架已停止支持，构建时可能出现 SDK 的生命周期警告。

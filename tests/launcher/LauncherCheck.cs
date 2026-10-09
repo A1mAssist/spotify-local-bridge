@@ -67,15 +67,15 @@ internal static class LauncherCheck
                 new Program.BridgeView(false), "C:\\Lyricify\\Lyricify.exe", "Ready", false, 1)[5], leftWidth),
             "Menu navigation must redraw only the left pane while real status changes redraw the right pane.");
         var laterProgress = Program.BuildPanel(79, 25, true, true, true, "Patched",
-            new Program.BridgeView(true, "测试歌曲", true, 15000, 180000), "C:\\Lyricify\\Lyricify.exe", "", false, 0);
+            new Program.BridgeView(true, "测试歌曲", true, 30000, 180000), "C:\\Lyricify\\Lyricify.exe", "", false, 0);
         Check(Program.LeftPanelUnchanged(panel[11], laterProgress[11], leftWidth)
             && !Program.RightPanelUnchanged(panel[11], laterProgress[11], leftWidth),
             "Playback updates must redraw only the right pane without flashing the menu.");
         Check(panel[5].Contains("> Remove Spotify patch") && panel[7].Contains("Restore Lyricify shortcut")
             && panel[9].Contains("Set Lyricify path") && panel[11].Contains("View hook log")
             && panel[18].Contains("Exit") && panel[9].Contains("测试歌曲")
-            && panel[11].Count(cell => "█░▏▎▍▌▋▊▉".Contains(cell)) == 34
-            && panel[11].Contains('▎')
+            && panel[11].Count(cell => "━●─".Contains(cell)) == 34
+            && panel[11].Contains('●') && !panel[11].Contains('░')
             && panel[14].Contains("Hook enabled") && !panel.Any(line => line.Contains("App       Lyricify.exe"))
             && panel[3].Contains("CONNECTION") && panel[8].Contains("NOW PLAYING")
             && panel[13].Contains("START MENU SHORTCUT") && !panel.Any(line => line.Contains("ACTIVITY") || line.Contains("Ready."))
@@ -108,8 +108,15 @@ internal static class LauncherCheck
         var widePanel = Program.BuildPanel(120, 25, true, true, true, "Patched",
             new Program.BridgeView(true, "测试歌曲", true, 12345, 180000), "C:\\Lyricify\\Lyricify.exe", "Ready", false, 0);
         Check(widePanel.All(line => Program.CellWidth(line) == 120)
-            && widePanel[11].Count(cell => "█░▏▎▍▌▋▊▉".Contains(cell)) == 71,
-            "A wide panel should use the full bar width and fractional progress cells.");
+            && widePanel[11].Count(cell => "━●─".Contains(cell)) == 71,
+            "A wide panel should use the full thin progress track.");
+        var startBar = Program.BuildPanel(79, 25, true, true, true, "Patched",
+            new Program.BridgeView(true, "Track", true, 0, 180000), "", "", false, 0)[11];
+        var endBar = Program.BuildPanel(79, 25, true, true, true, "Patched",
+            new Program.BridgeView(true, "Track", true, 180000, 180000), "", "", false, 0)[11];
+        Check(startBar.Contains("  ●" + new string('─', 33))
+            && endBar.Contains("  " + new string('━', 33) + "●"),
+            "The progress marker must remain inside the track at both endpoints.");
         Check(Program.BuildPanel(76, 25, true, true, true, "Patched", new(true), "", "Ready", false, 0).Length == 22
             && Program.BuildPanel(75, 25, true, true, true, "Patched", new(true), "", "Ready", false, 0).Length == 12,
             "The two-column layout should switch to compact mode before its status rows become cramped.");
@@ -185,7 +192,16 @@ internal static class LauncherCheck
             Program.PatchShortcut(shortcutPath, backupPath, Environment.ProcessPath!, testExe);
             Check(File.ReadAllBytes(backupPath).SequenceEqual(originalShortcut),
                 "Patching an already managed shortcut must keep its original backup.");
-            Program.RestoreShortcut(shortcutPath, backupPath, Environment.ProcessPath!);
+            var movedLauncher = Path.Combine(testDirectory, "moved", Path.GetFileName(Environment.ProcessPath!));
+            Directory.CreateDirectory(Path.GetDirectoryName(movedLauncher)!);
+            File.Copy(testExe, movedLauncher);
+            Check(Program.ShortcutState(shortcutPath, backupPath, movedLauncher) == "Patched (old location)",
+                "Moving the launcher must leave the backup available for repair.");
+            Program.PatchShortcut(shortcutPath, backupPath, movedLauncher, testExe);
+            Check(Program.ShortcutState(shortcutPath, backupPath, movedLauncher) == "Patched"
+                && File.ReadAllBytes(backupPath).SequenceEqual(originalShortcut),
+                "Repairing a moved launcher must preserve the original shortcut backup.");
+            Program.RestoreShortcut(shortcutPath, backupPath, movedLauncher);
             Check(Program.ReadShortcut(shortcutPath).Target == testExe && Program.ReadShortcut(shortcutPath).Arguments == "-n 1"
                 && !File.Exists(backupPath) && File.ReadAllBytes(shortcutPath).SequenceEqual(originalShortcut),
                 "Restoring must recover the exact original shortcut.");

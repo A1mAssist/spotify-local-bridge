@@ -19,8 +19,7 @@ if (-not $ValidateOnly -and (Test-Path -LiteralPath (Join-Path $live 'spotify-lo
     throw 'The standalone bridge is already installed. Uninstall it before installing again.'
 }
 
-$backupRoot = Join-Path $apps '.spotify-local-bridge-backups'
-New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+$backupRoot = Join-Path (Join-Path $env:LOCALAPPDATA 'SpotifyLocalBridge') 'backups'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fffffff'
 $stage = Join-Path $apps "xpui.local-bridge-stage-$stamp"
 $previous = if (Test-Path -LiteralPath $live -PathType Container) {
@@ -73,6 +72,7 @@ try {
         return
     }
 
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
     if ($previous) { Move-Item -LiteralPath $live -Destination $previous }
     if ($previousArchive) { Move-Item -LiteralPath $archive -Destination $previousArchive }
     Move-Item -LiteralPath $stage -Destination $live

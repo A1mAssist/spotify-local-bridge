@@ -10,9 +10,13 @@ $live = Join-Path $apps 'xpui'
 $manifestPath = Join-Path $live 'spotify-local-bridge-install.json'
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw 'Standalone bridge installation not found.' }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$backupRoot = Join-Path $apps '.spotify-local-bridge-backups'
+$backupRoot = Join-Path (Join-Path $env:LOCALAPPDATA 'SpotifyLocalBridge') 'backups'
+$legacyBackupRoot = Join-Path $apps '.spotify-local-bridge-backups'
 foreach ($path in @($manifest.PreviousDirectory, $manifest.PreviousArchive)) {
-    if ($path -and -not ([IO.Path]::GetFullPath($path)).StartsWith($backupRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    $resolved = if ($path) { [IO.Path]::GetFullPath($path) } else { $null }
+    if ($resolved -and -not (
+        $resolved.StartsWith($backupRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+        $resolved.StartsWith($legacyBackupRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase))) {
         throw "Unexpected backup path in manifest: $path"
     }
 }
@@ -27,6 +31,7 @@ if ($manifest.PreviousArchive -and (Test-Path -LiteralPath (Join-Path $apps 'xpu
 }
 
 $retired = Join-Path $backupRoot ("xpui-standalone-retired-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fffffff'))
+New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
 Move-Item -LiteralPath $live -Destination $retired
 if ($manifest.PreviousDirectory) { Move-Item -LiteralPath $manifest.PreviousDirectory -Destination $live }
 if ($manifest.PreviousArchive) { Move-Item -LiteralPath $manifest.PreviousArchive -Destination (Join-Path $apps 'xpui.spa') }
