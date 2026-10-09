@@ -36,6 +36,16 @@ The log view shortens timestamps and wraps long messages. For actions that requi
 
 You can also pass a Lyricify EXE path to the launcher: it starts that application, then opens the panel. Developers can start the Hook separately with `.\lyricify-hook\run.ps1 -LyricifyExe 'C:\path\to\Lyricify for Spotify.exe'`; the script prints the log path. The log messages `PATCHED playback reads, modes, volume, and library controls` and `PATCHED MediaSession timeline enhancement bypass (including Plus)` indicate that the respective patches were installed.
 
+### Start with Windows
+
+Lyricify must start through the patched launcher shortcut for the Hook to load. The management panel does not need to stay open.
+
+1. Put `LyricifyLauncher.exe` in its permanent location. In the panel, select `Enable Lyricify shortcut` (or `Repair Lyricify shortcut` if the EXE was moved).
+2. Disable Lyricify's own startup setting or Windows Startup Apps entry so it cannot start directly without the Hook.
+3. Press `Win + R`, enter `shell:startup`, and copy the patched **Lyricify 4** Start Menu shortcut into that folder. At sign-in, this copy starts Lyricify through `--launch-only` without opening the panel; the launcher also starts Spotify if needed.
+
+If you move the EXE later, repair the Start Menu shortcut from the new location and replace the copy in `shell:startup`. Delete the Startup-folder copy to stop automatic launching; restoring the Start Menu shortcut alone does not remove that copy.
+
 ## Bridge coverage
 
 The Spotify XPUI script reads the client's own `PlayerAPI`, `PlaybackAPI`, and `LibraryAPI`. It sends playback state to `127.0.0.1:48711` and receives local control commands. A .NET Startup Hook inside Lyricify provides the local receiver, replaces both overloads of `SpotifyAPI.Web.PlayerClient.GetCurrentPlayback` with in-memory state, and forwards pause, resume, previous/next, seek, shuffle/repeat, volume, and saved-track actions to the Spotify client. Coverage includes the current track, timeline, playback mode, volume, liked state, and saved-track checks needed for queue preloading. Playback state collection uses neither a browser wrapper nor Windows Media Session.

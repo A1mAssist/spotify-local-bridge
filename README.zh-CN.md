@@ -36,6 +36,16 @@ EXE 已包含 .NET 8 运行时、Hook 及其依赖、Spotify XPUI 脚本和安�
 
 也可以向 EXE 传入一个 Lyricify 程序路径：它会先启动该程序，再打开面板。开发者还可使用 `.\lyricify-hook\run.ps1 -LyricifyExe 'C:\path\to\Lyricify for Spotify.exe'` 单独启动 Hook；运行日志位置由脚本输出。日志中的 `PATCHED playback reads, modes, volume, and library controls` 与 `PATCHED MediaSession timeline enhancement bypass (including Plus)` 表示相应补丁已安装。
 
+### 开机启动
+
+Lyricify 必须经插件快捷方式启动，Hook 才会加载；管理面板不需要常驻。
+
+1. 先把 `LyricifyLauncher.exe` 放在固定位置，在面板中选择 `Enable Lyricify shortcut`。如果此前移动过 EXE，选择 `Repair Lyricify shortcut`。
+2. 关闭 Lyricify 自带的开机启动设置，或在 Windows「启动应用」中禁用直接启动 Lyricify 的条目，避免它先以未加载 Hook 的方式运行。
+3. 按 `Win + R`，输入 `shell:startup`。把开始菜单中已启用插件的 **Lyricify 4** 快捷方式复制到打开的文件夹。下次登录时，它会通过 `--launch-only` 启动 Lyricify，不打开管理面板；Spotify 未运行时，启动器也会尝试启动它。
+
+以后移动 EXE 时，先从新位置运行并修复开始菜单快捷方式，再替换 `shell:startup` 中的副本。要取消开机启动，删除启动文件夹中的副本即可；只恢复开始菜单快捷方式不会删除这个副本。
+
 ## 桥接范围
 
 Spotify XPUI 脚本读取客户端自身的 `PlayerAPI`、`PlaybackAPI` 和 `LibraryAPI`，把播放状态发往 `127.0.0.1:48711`，并接收本地控制命令。Lyricify 进程内的 .NET Startup Hook 提供该本地接收服务，用内存状态替换 `SpotifyAPI.Web.PlayerClient.GetCurrentPlayback` 的两个重载，并将暂停、继续、切歌、拖动进度、随机/循环、音量和当前歌曲的收藏操作转给 Spotify 客户端。当前歌曲、时间轴、播放模式、音量、红心状态以及队列预加载所需的已收藏查询均在覆盖范围内。无需浏览器包装器或 Windows 媒体会话参与播放状态采集。
