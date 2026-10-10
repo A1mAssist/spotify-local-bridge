@@ -6,7 +6,7 @@
 
 目前的补丁位置已针对 Spotify Desktop 1.2.89.539 和 Lyricify 4.4.0 检查。客户端更新后可能需要重新适配。项目源码采用 [MIT 许可证](LICENSE)，打包依赖的版权与许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
-当前 Release：`v0.1.9`。本版本保留小体积的 framework-dependent 启动器和跨终端一致的单元格方块进度条；当 Spotify XPUI 提供较小的专辑图时，桥接会请求同一图片的 640×640 Spotify CDN 版本，并由启动器本体直接完成 XPUI 安装和移除，不再调用 PowerShell。活动错误包含备份路径时会保留可见分隔符，并显示长路径的有效尾部。
+当前 Release：`v0.1.10`。本版本保留小体积的 framework-dependent 启动器和跨终端一致的单元格方块进度条；当 Spotify XPUI 提供较小的专辑图时，桥接会请求同一图片的 640×640 Spotify CDN 版本，并由启动器本体直接完成 XPUI 安装和移除，不再调用 PowerShell。活动错误包含备份路径时会保留可见分隔符，并显示长路径的有效尾部。
 
 ## 下载与使用
 

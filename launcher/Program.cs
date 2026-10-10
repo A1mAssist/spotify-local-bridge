@@ -667,10 +667,10 @@ internal static class Program
             if (Count(index, scriptTag) != 1) throw new InvalidOperationException("Spotify XPUI script tag changed; no files were installed.");
             foreach (var (from, to) in new[]
             {
-                ("i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),{version:n,container:e,operatingSystem:'",
-                 "i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),window.__spotifyLocalBridgeStart?.(i),{version:n,container:e,operatingSystem:'"),
-                ("u.registerFactory(ed.J,()=>new ep.Q),{version:n,container:e,operatingSystem:'",
-                 "u.registerFactory(ed.J,()=>new ep.Q),window.__spotifyLocalBridgeStart?.(u),{version:n,container:e,operatingSystem:'")
+                ("i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),{version:n,container:e,operatingSystem:",
+                 "i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),window.__spotifyLocalBridgeStart?.(i),{version:n,container:e,operatingSystem:"),
+                ("u.registerFactory(ed.J,()=>new ep.Q),{version:n,container:e,operatingSystem:",
+                 "u.registerFactory(ed.J,()=>new ep.Q),window.__spotifyLocalBridgeStart?.(u),{version:n,container:e,operatingSystem:")
             })
             {
                 if (Count(bundle, from) != 1) throw new InvalidOperationException("Spotify XPUI bootstrap changed; no files were installed.");
