@@ -712,10 +712,8 @@ internal static class Program
         foreach (var path in new[] { previous, previousArchive }.Where(path => path != null))
             if (!IsInside(path!, backupRoot) && !IsInside(path!, legacyRoot))
                 throw new InvalidOperationException($"Unexpected backup path in manifest: {path}");
-        if (previous != null && (!Directory.Exists(previous)
-            || !File.Exists(Path.Combine(previous, "index.html"))
-            || !File.Exists(Path.Combine(previous, "xpui.js"))))
-            throw new InvalidOperationException($"Previous XPUI backup is missing or incomplete; leaving the installation intact. Backup: {previous}");
+        if (previous != null && !Directory.Exists(previous))
+            throw new InvalidOperationException($"Previous XPUI backup is missing; leaving the installation intact. Backup: {previous}");
         if (previousArchive != null && !File.Exists(previousArchive))
             throw new InvalidOperationException($"Previous xpui.spa backup is missing; leaving the installation intact. Backup: {previousArchive}");
         var archive = Path.Combine(apps, "xpui.spa");
@@ -1018,7 +1016,7 @@ internal static class Program
                 var activity = Clip(message.Replace("\r\n", " | ", StringComparison.Ordinal).Replace("\n", " | ", StringComparison.Ordinal), int.MaxValue);
                 var firstLine = Clip(activity, rightWidth - 4);
                 right[15] = "  " + firstLine;
-                right[16] = "  " + (activity.Length > firstLine.Length ? activity[firstLine.Length..].TrimStart() : "");
+                right[16] = "  " + Tail(activity.Length > firstLine.Length ? activity[firstLine.Length..].TrimStart() : "", rightWidth - 2);
             }
         }
         for (var index = 0; index < menu.Length; index++)
