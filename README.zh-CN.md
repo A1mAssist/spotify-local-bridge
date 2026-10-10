@@ -6,6 +6,8 @@
 
 目前的补丁位置已针对 Spotify Desktop 1.2.89.539 和 Lyricify 4.4.0 检查。客户端更新后可能需要重新适配。项目源码采用 [MIT 许可证](LICENSE)，打包依赖的版权与许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
+当前 Release：`v0.1.2`。本版本继续转发当前曲目，并在 Spotify XPUI 暴露时补充曲目编号、专辑发行日期和专辑曲目数。
+
 ## 下载与使用
 
 1. 安装来自 spotify.com 的桌面版 Spotify，并准备原始的 `Apps\xpui.spa`。如果曾使用 Spicetify 修改 Spotify，首次安装补丁时可在面板中指定其备份的原始 `xpui.spa`。安装器会保留原来的 XPUI 目录，并在修改前检查当前版本的启动代码；卸载时若 Spotify 又生成了新的 `xpui.spa`，安装器会停止操作，避免覆盖该文件。

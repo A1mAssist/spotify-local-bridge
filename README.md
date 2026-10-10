@@ -6,6 +6,8 @@ This is an unofficial Windows x64 integration project unaffiliated with Spotify 
 
 The patch locations have been checked against Spotify Desktop 1.2.89.539 and Lyricify 4.4.0. Client updates may require changes. The project source is licensed under [MIT](LICENSE); see [third-party notices](THIRD_PARTY_NOTICES.md) for bundled dependencies.
 
+Current release: `v0.1.2`. This release continues to forward the current track and adds the track number, album release date, and album track count when Spotify XPUI exposes them.
+
 ## Download and use
 
 1. Install the desktop version of Spotify from spotify.com and keep an original `Apps\xpui.spa`. If Spicetify previously modified Spotify, you can provide its backup of the original `xpui.spa` when the panel asks for it. The installer preserves the previous XPUI directory and checks the current bootstrap code before patching. Removal stops if Spotify has created a new `xpui.spa`, so it will not overwrite that file.
