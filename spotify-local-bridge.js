@@ -220,6 +220,15 @@
     return hex.length <= 32 ? hex.padStart(32, "0") : null;
   }
 
+  function preferLargeImage(value) {
+    const prefix = "spotify:image:";
+    if (typeof value !== "string" || !value.startsWith(prefix)) return value ?? null;
+    const id = value.slice(prefix.length);
+    return /^ab67616d[0-9a-f]{8}[0-9a-f]{24}$/i.test(id)
+      ? prefix + id.slice(0, 8) + "0000b273" + id.slice(16)
+      : value;
+  }
+
   async function getTrackIsrc(item, meta) {
     const direct = [meta.isrc, meta.isrc_id, meta.track_isrc, item?.isrc,
       item?.external_ids?.isrc].map(cleanIsrc).find(Boolean);
@@ -315,8 +324,8 @@
       album_release_date: typeof albumReleaseDate === "string" ? albumReleaseDate : null,
       album_total_tracks: Number.isInteger(albumTotalTracks) && albumTotalTracks >= 0 ? albumTotalTracks : null,
       isrc,
-      image_url: item?.album?.images?.[0]?.url ?? item?.images?.[0]?.url
-        ?? meta.image_large_url ?? meta.image_url ?? null,
+      image_url: preferLargeImage(item?.album?.images?.[0]?.url ?? item?.images?.[0]?.url
+        ?? meta.image_large_url ?? meta.image_url ?? null),
       is_local: Boolean(item?.isLocal),
       duration_ms: Math.max(0, Math.round(duration)),
       progress_ms: Math.max(0, Math.min(Math.round(progress), duration || Infinity)),

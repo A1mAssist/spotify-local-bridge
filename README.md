@@ -6,7 +6,7 @@ This is an unofficial Windows x64 integration project unaffiliated with Spotify 
 
 The patch locations have been checked against Spotify Desktop 1.2.89.539 and Lyricify 4.4.0. Client updates may require changes. The project source is licensed under [MIT](LICENSE); see [third-party notices](THIRD_PARTY_NOTICES.md) for bundled dependencies.
 
-Current release: `v0.1.5`. This release keeps the small framework-dependent launcher and changes the TUI playback bar to a consistent single-cell block style across terminals.
+Current release: `v0.1.6`. This release keeps the small framework-dependent launcher, uses a consistent single-cell playback bar, and requests the 640×640 Spotify CDN variant when XPUI supplies a smaller album image.
 
 ## Download and use
 
