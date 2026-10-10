@@ -17,6 +17,9 @@ $stateType.GetProperty('TrackUri').SetValue($state, 'spotify:track:0BxE4FqsDD1Ot
 $stateType.GetProperty('Title').SetValue($state, '505')
 $stateType.GetProperty('Artists').SetValue($state, [string[]]@('Arctic Monkeys'))
 $stateType.GetProperty('Album').SetValue($state, 'Favourite Worst Nightmare')
+$stateType.GetProperty('TrackNumber').SetValue($state, [Nullable[int]]::new(7))
+$stateType.GetProperty('AlbumReleaseDate').SetValue($state, '2007-04-23')
+$stateType.GetProperty('AlbumTotalTracks').SetValue($state, [Nullable[int]]::new(13))
 $stateType.GetProperty('DurationMs').SetValue($state, 253000)
 $stateType.GetProperty('Isrc').SetValue($state, 'USUM71703861')
 
@@ -28,7 +31,9 @@ if ($null -eq $device -or $device.Name -ne 'Spotify' -or
     $device.SupportsVolume -or $null -ne $device.VolumePercent -or
     $null -eq $track -or $track.Id -ne '0BxE4FqsDD1Ot4YuBXwAPp' -or
     $track.Name -ne '505' -or $track.Artists[0].Name -ne 'Arctic Monkeys' -or
-    $track.Album.Name -ne 'Favourite Worst Nightmare' -or $track.DurationMs -ne 253000 -or
+    $track.Album.Name -ne 'Favourite Worst Nightmare' -or $track.TrackNumber -ne 7 -or
+    $track.Album.ReleaseDate -ne '2007-04-23' -or $track.Album.TotalTracks -ne 13 -or
+    $track.DurationMs -ne 253000 -or
     $track.ExternalIds['isrc'] -ne 'USUM71703861') {
     throw 'Playback mapping does not satisfy Lyricify lyric-loading fields.'
 }

@@ -329,6 +329,9 @@ internal static class LocalBridgeServer
             && (state.ArtistUris == null || (state.ArtistUris.Length <= state.Artists.Length
                 && state.ArtistUris.All(uri => Optional(uri, 512))))
             && Text(state.Album, 1000) && Optional(state.AlbumUri, 512)
+            && (state.TrackNumber == null || state.TrackNumber is >= 0 and <= 100000)
+            && Optional(state.AlbumReleaseDate, 32)
+            && (state.AlbumTotalTracks == null || state.AlbumTotalTracks is >= 0 and <= 100000)
             && (state.Isrc == null || Regex.IsMatch(state.Isrc, "^[A-Z]{2}[A-Z0-9]{3}\\d{7}$"))
             && Optional(state.ImageUrl, 1024)
             && state.DurationMs is >= 0 and <= 43_200_000

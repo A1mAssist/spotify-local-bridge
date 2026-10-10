@@ -34,6 +34,9 @@ try {
         title = '505'
         artists = @('Arctic Monkeys')
         album = 'Favourite Worst Nightmare'
+        track_number = 7
+        album_release_date = '2007-04-23'
+        album_total_tracks = 13
         duration_ms = 253000
         progress_ms = 5000
         is_playing = $true
@@ -102,6 +105,8 @@ try {
         $commands[2].name -ne 'repeat' -or $commands[2].value -ne 2) { throw 'Queued command was not returned.' }
     $current = (Invoke-WebRequest "$base/state").Content | ConvertFrom-Json
     if ($current.track_uri -ne $state.track_uri -or $current.isrc -ne $state.isrc -or
+        $current.track_number -ne 7 -or $current.album_release_date -ne '2007-04-23' -or
+        $current.album_total_tracks -ne 13 -or
         $current.progress_ms -lt 5000 -or $current.updated_at_ms -le 0) { throw 'Stored state is incorrect.' }
     if ($server.GetMethod('NextRepeat', $flags).Invoke($null, @()) -ne 1) { throw 'Repeat cycle did not advance from off to context.' }
     if ($SpotifyApiDll) {

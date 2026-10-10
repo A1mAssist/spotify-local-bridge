@@ -292,6 +292,11 @@
     const meta = item?.metadata ?? {};
     const artists = item?.artists?.filter((artist) => artist.name) ?? [];
     const duration = Number(state?.duration ?? item?.duration?.milliseconds ?? meta.duration) || 0;
+    const trackNumber = Number(item?.track_number ?? item?.trackNumber ?? meta.track_number ?? meta.trackNumber);
+    const albumReleaseDate = item?.album?.release_date ?? item?.album?.releaseDate
+      ?? meta.album_release_date ?? meta.release_date ?? meta.albumReleaseDate ?? null;
+    const albumTotalTracks = Number(item?.album?.total_tracks ?? item?.album?.totalTracks
+      ?? meta.album_total_tracks ?? meta.total_tracks ?? meta.albumTotalTracks);
     const speed = Number(state?.speed ?? 1);
     const advancing = Boolean(item && state.hasContext && !state.isPaused && !state.isBuffering && speed > 0);
     const progress = item ? (Number(state.positionAsOfTimestamp) || 0)
@@ -306,6 +311,9 @@
         : (meta.artist_uri ? [meta.artist_uri] : []),
       album: item?.album?.name ?? meta.album_title ?? "",
       album_uri: item?.album?.uri ?? meta.album_uri ?? null,
+      track_number: Number.isInteger(trackNumber) && trackNumber >= 0 ? trackNumber : null,
+      album_release_date: typeof albumReleaseDate === "string" ? albumReleaseDate : null,
+      album_total_tracks: Number.isInteger(albumTotalTracks) && albumTotalTracks >= 0 ? albumTotalTracks : null,
       isrc,
       image_url: item?.album?.images?.[0]?.url ?? item?.images?.[0]?.url
         ?? meta.image_large_url ?? meta.image_url ?? null,

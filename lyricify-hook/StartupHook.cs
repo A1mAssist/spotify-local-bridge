@@ -418,7 +418,9 @@ internal static class PlaybackPatch
             Id = Id(state.AlbumUri, "album")!,
             Type = "album",
             Artists = artists,
-            Images = image == null ? new List<Image>() : new List<Image> { new Image { Url = image } }
+            Images = image == null ? new List<Image>() : new List<Image> { new Image { Url = image } },
+            ReleaseDate = state.AlbumReleaseDate,
+            TotalTracks = state.AlbumTotalTracks ?? 0
         };
         var track = new FullTrack
         {
@@ -426,6 +428,7 @@ internal static class PlaybackPatch
             Uri = state.TrackUri,
             Name = state.Title ?? "",
             DurationMs = state.DurationMs,
+            TrackNumber = state.TrackNumber ?? 0,
             IsPlayable = true,
             IsLocal = state.IsLocal,
             Type = ItemType.Track,
@@ -490,6 +493,9 @@ internal sealed class BridgeState
     [JsonPropertyName("artist_uris")] public string?[]? ArtistUris { get; set; }
     [JsonPropertyName("album")] public string? Album { get; set; }
     [JsonPropertyName("album_uri")] public string? AlbumUri { get; set; }
+    [JsonPropertyName("track_number")] public int? TrackNumber { get; set; }
+    [JsonPropertyName("album_release_date")] public string? AlbumReleaseDate { get; set; }
+    [JsonPropertyName("album_total_tracks")] public int? AlbumTotalTracks { get; set; }
     [JsonPropertyName("isrc")] public string? Isrc { get; set; }
     [JsonPropertyName("image_url")] public string? ImageUrl { get; set; }
     [JsonPropertyName("is_local")] public bool IsLocal { get; set; }

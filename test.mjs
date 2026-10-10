@@ -10,7 +10,8 @@ const player = {
       uri: "spotify:track:0BxE4FqsDD1Ot4YuBXwAPp",
       name: "505",
       artists: [{ name: "Arctic Monkeys", uri: "spotify:artist:7Ln80lUS6He07XvHI8qqHH" }],
-      album: { name: "Favourite Worst Nightmare", uri: "spotify:album:1pC9EKmMbDH8M6o7l4s3sM", images: [{ url: "spotify:image:abc" }] },
+      album: { name: "Favourite Worst Nightmare", uri: "spotify:album:1pC9EKmMbDH8M6o7l4s3sM", release_date: "2007-04-23", total_tracks: 13, images: [{ url: "spotify:image:abc" }] },
+      track_number: 7,
       metadata: { isrc: "invalid", track_isrc: "invalid" },
       external_id: {},
     },
@@ -147,6 +148,9 @@ assert.ok(messages[0].progress_ms >= 5000 && messages[0].progress_ms < 5100);
 assert.equal(messages[0].is_playing, true);
 assert.equal(messages[0].artist_uris[0], player._state.item.artists[0].uri);
 assert.equal(messages[0].album_uri, player._state.item.album.uri);
+assert.equal(messages[0].track_number, 7);
+assert.equal(messages[0].album_release_date, "2007-04-23");
+assert.equal(messages[0].album_total_tracks, 13);
 assert.equal(messages[0].isrc, null);
 assert.equal(messages[0].image_url, "spotify:image:abc");
 assert.equal(messages[0].volume_percent, null);

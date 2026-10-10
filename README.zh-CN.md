@@ -50,7 +50,7 @@ Lyricify 必须经插件快捷方式启动，Hook 才会加载；管理面板不
 
 ## 桥接范围
 
-Spotify XPUI 脚本读取客户端自身的 `PlayerAPI`、`PlaybackAPI` 和 `LibraryAPI`，把播放状态发往 `127.0.0.1:48711`，并接收本地控制命令。Lyricify 进程内的 .NET Startup Hook 提供该本地接收服务，用内存状态替换 `SpotifyAPI.Web.PlayerClient.GetCurrentPlayback` 的两个重载，并将暂停、继续、切歌、拖动进度、随机/循环、音量和当前歌曲的收藏操作转给 Spotify 客户端。当前歌曲、时间轴、播放模式、音量、红心状态以及队列预加载所需的已收藏查询均在覆盖范围内。TUI 读取的是同一个接收服务，不是独立的 Spotify 读取器。无需浏览器包装器或 Windows 媒体会话参与播放状态采集。
+Spotify XPUI 脚本读取客户端自身的 `PlayerAPI`、`PlaybackAPI` 和 `LibraryAPI`，把播放状态发往 `127.0.0.1:48711`，并接收本地控制命令。Lyricify 进程内的 .NET Startup Hook 提供该本地接收服务，用内存状态替换 `SpotifyAPI.Web.PlayerClient.GetCurrentPlayback` 的两个重载，并将暂停、继续、切歌、拖动进度、随机/循环、音量和当前歌曲的收藏操作转给 Spotify 客户端。当前歌曲、曲目编号、专辑发行日期、专辑曲目数、时间轴、播放模式、音量、红心状态以及队列预加载所需的已收藏查询均在 XPUI 暴露时转发。TUI 读取的是同一个接收服务，不是独立的 Spotify 读取器。无需浏览器包装器或 Windows 媒体会话参与播放状态采集。
 
 带 Hook 的进程会跳过 Lyricify 媒体会话增强及其定时器入口，因此保存的“媒体会话增强”“时间轴修正”和“时间轴修正 Plus”设置不会控制该进程的播放或时间轴。Plus 可能为刷新 Windows 时间轴而主动暂停、继续播放，所以桥接状态统一来自 Spotify XPUI。未带 Hook 启动的 Lyricify 仍按自身保存的设置运行。
 
