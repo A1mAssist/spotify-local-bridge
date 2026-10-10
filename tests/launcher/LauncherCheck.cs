@@ -85,6 +85,10 @@ internal static class LauncherCheck
             new Program.BridgeView(true), "", "Lyricify path saved.", false, 0);
         Check(resultPanel[16].Contains("ACTIVITY") && resultPanel[17].Contains("Lyricify path saved."),
             "Actual operation results must remain visible in the right pane.");
+        var errorPanel = Program.BuildPanel(79, 25, true, true, true, "Patched", new(true), "", "Previous XPUI backup is missing.\nC:\\backup", false, 0);
+        var errorText = string.Concat(errorPanel);
+        Check(!errorText.Contains("missing.C:\\") && errorPanel.Any(line => line.Contains('|')),
+            "Multi-line operation errors must keep a visible separator in the activity panel.");
         var confirmation = new Program.PanelPrompt("CONFIRM REMOVAL", "Close Spotify and Lyricify",
             "Remove Spotify patch", "Y Confirm    Esc Cancel", Confirmation: true);
         var confirmPanel = Program.BuildPanel(79, 25, true, true, true, "Patched", new(true), "", "", false, 0, confirmation);

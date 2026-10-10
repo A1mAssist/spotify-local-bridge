@@ -6,7 +6,7 @@ This is an unofficial Windows x64 integration project unaffiliated with Spotify 
 
 The patch locations have been checked against Spotify Desktop 1.2.89.539 and Lyricify 4.4.0. Client updates may require changes. The project source is licensed under [MIT](LICENSE); see [third-party notices](THIRD_PARTY_NOTICES.md) for bundled dependencies.
 
-Current release: `v0.1.7`. This release keeps the small framework-dependent launcher, uses a consistent single-cell playback bar, requests the 640×640 Spotify CDN variant when XPUI supplies a smaller album image, and performs XPUI install/removal directly in the launcher without PowerShell.
+Current release: `v0.1.8`. This release keeps the small framework-dependent launcher, uses a consistent single-cell playback bar, requests the 640×640 Spotify CDN variant when XPUI supplies a smaller album image, and performs XPUI install/removal directly in the launcher without PowerShell. Activity errors keep visible separators when they include a backup path.
 
 ## Download and use
 

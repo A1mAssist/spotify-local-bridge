@@ -712,10 +712,12 @@ internal static class Program
         foreach (var path in new[] { previous, previousArchive }.Where(path => path != null))
             if (!IsInside(path!, backupRoot) && !IsInside(path!, legacyRoot))
                 throw new InvalidOperationException($"Unexpected backup path in manifest: {path}");
-        if (previous != null && !Directory.Exists(previous))
-            throw new InvalidOperationException($"Previous XPUI backup is missing; leaving the installation intact.\n{previous}");
+        if (previous != null && (!Directory.Exists(previous)
+            || !File.Exists(Path.Combine(previous, "index.html"))
+            || !File.Exists(Path.Combine(previous, "xpui.js"))))
+            throw new InvalidOperationException($"Previous XPUI backup is missing or incomplete; leaving the installation intact. Backup: {previous}");
         if (previousArchive != null && !File.Exists(previousArchive))
-            throw new InvalidOperationException($"Previous xpui.spa backup is missing; leaving the installation intact.\n{previousArchive}");
+            throw new InvalidOperationException($"Previous xpui.spa backup is missing; leaving the installation intact. Backup: {previousArchive}");
         var archive = Path.Combine(apps, "xpui.spa");
         if (previousArchive != null && File.Exists(archive))
             throw new InvalidOperationException("Spotify created a new xpui.spa; leaving both it and the installation intact.");
@@ -1013,10 +1015,10 @@ internal static class Program
             else if (!string.IsNullOrWhiteSpace(message))
             {
                 right[14] = "  ACTIVITY";
-                var activity = Clip(message, int.MaxValue);
+                var activity = Clip(message.Replace("\r\n", " | ", StringComparison.Ordinal).Replace("\n", " | ", StringComparison.Ordinal), int.MaxValue);
                 var firstLine = Clip(activity, rightWidth - 4);
                 right[15] = "  " + firstLine;
-                right[16] = "  " + activity[firstLine.Length..];
+                right[16] = "  " + (activity.Length > firstLine.Length ? activity[firstLine.Length..].TrimStart() : "");
             }
         }
         for (var index = 0; index < menu.Length; index++)
