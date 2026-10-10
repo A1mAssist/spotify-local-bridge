@@ -6,7 +6,7 @@ This is an unofficial Windows x64 integration project unaffiliated with Spotify 
 
 The patch locations have been checked against Spotify Desktop 1.2.89.539 and Lyricify 4.4.0. Client updates may require changes. The project source is licensed under [MIT](LICENSE); see [third-party notices](THIRD_PARTY_NOTICES.md) for bundled dependencies.
 
-Current release: `v0.1.2`. This release continues to forward the current track and adds the track number, album release date, and album track count when Spotify XPUI exposes them.
+Current release: `v0.1.3`. This release continues to forward the current track and adds the track number, album release date, and album track count when Spotify XPUI exposes them. The installer explicitly loads its compression component, and the launcher manages original XPUI directories and archives under `%LOCALAPPDATA%\SpotifyLocalBridge\backups\`.
 
 ## Download and use
 

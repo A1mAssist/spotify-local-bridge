@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 if (-not $ValidateOnly -and (Get-Process Spotify -ErrorAction SilentlyContinue)) {
     throw 'Close Spotify before installing the local bridge.'
 }
