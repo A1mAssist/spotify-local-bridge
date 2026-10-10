@@ -74,8 +74,8 @@ internal static class LauncherCheck
         Check(panel[5].Contains("> Remove Spotify patch") && panel[7].Contains("Restore Lyricify shortcut")
             && panel[9].Contains("Set Lyricify path") && panel[11].Contains("View hook log")
             && panel[18].Contains("Exit") && panel[9].Contains("测试歌曲")
-            && panel[11].Count(cell => "━●─".Contains(cell)) == 34
-            && panel[11].Contains('●') && !panel[11].Contains('░')
+            && panel[11].Count(cell => "█░".Contains(cell)) == 34
+            && panel[11].Contains('█') && panel[11].Contains('░')
             && panel[14].Contains("Hook enabled") && !panel.Any(line => line.Contains("App       Lyricify.exe"))
             && panel[3].Contains("CONNECTION") && panel[8].Contains("NOW PLAYING")
             && panel[13].Contains("START MENU SHORTCUT") && !panel.Any(line => line.Contains("ACTIVITY") || line.Contains("Ready."))
@@ -108,15 +108,15 @@ internal static class LauncherCheck
         var widePanel = Program.BuildPanel(120, 25, true, true, true, "Patched",
             new Program.BridgeView(true, "测试歌曲", true, 12345, 180000), "C:\\Lyricify\\Lyricify.exe", "Ready", false, 0);
         Check(widePanel.All(line => Program.CellWidth(line) == 120)
-            && widePanel[11].Count(cell => "━●─".Contains(cell)) == 71,
-            "A wide panel should use the full thin progress track.");
+            && widePanel[11].Count(cell => "█░".Contains(cell)) == 71,
+            "A wide panel should use the full block progress track.");
         var startBar = Program.BuildPanel(79, 25, true, true, true, "Patched",
             new Program.BridgeView(true, "Track", true, 0, 180000), "", "", false, 0)[11];
         var endBar = Program.BuildPanel(79, 25, true, true, true, "Patched",
             new Program.BridgeView(true, "Track", true, 180000, 180000), "", "", false, 0)[11];
-        Check(startBar.Contains("  ●" + new string('─', 33))
-            && endBar.Contains("  " + new string('━', 33) + "●"),
-            "The progress marker must remain inside the track at both endpoints.");
+        Check(startBar.Contains("  " + new string('░', 33))
+            && endBar.Contains("  " + new string('█', 33)),
+            "The progress bar must fill cleanly at both endpoints.");
         Check(Program.BuildPanel(76, 25, true, true, true, "Patched", new(true), "", "Ready", false, 0).Length == 22
             && Program.BuildPanel(75, 25, true, true, true, "Patched", new(true), "", "Ready", false, 0).Length == 12,
             "The two-column layout should switch to compact mode before its status rows become cramped.");

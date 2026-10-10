@@ -6,7 +6,7 @@ This is an unofficial Windows x64 integration project unaffiliated with Spotify 
 
 The patch locations have been checked against Spotify Desktop 1.2.89.539 and Lyricify 4.4.0. Client updates may require changes. The project source is licensed under [MIT](LICENSE); see [third-party notices](THIRD_PARTY_NOTICES.md) for bundled dependencies.
 
-Current release: `v0.1.4`. This release keeps the metadata forwarding from `v0.1.3` and changes the launcher to a small framework-dependent .NET 8 package. The installer explicitly loads its compression component, and the launcher manages original XPUI directories and archives under `%LOCALAPPDATA%\SpotifyLocalBridge\backups\`.
+Current release: `v0.1.5`. This release keeps the small framework-dependent launcher and changes the TUI playback bar to a consistent single-cell block style across terminals.
 
 ## Download and use
 

@@ -894,8 +894,8 @@ internal static class Program
             if (connected && spotify && bridge.Duration > 0)
             {
                 var barWidth = rightWidth - 4;
-                var position = (int)Math.Clamp((long)bridge.Progress * (barWidth - 1) / bridge.Duration, 0, barWidth - 1);
-                right[9] = "  " + new string('━', position) + "●" + new string('─', barWidth - position - 1);
+                var filled = (int)Math.Clamp((long)bridge.Progress * barWidth / bridge.Duration, 0, barWidth);
+                right[9] = "  " + new string('█', filled) + new string('░', barWidth - filled);
             }
             right[11] = "  START MENU SHORTCUT";
             right[12] = "  " + (shortcut switch
