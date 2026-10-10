@@ -13,7 +13,5 @@
     <EmbeddedResource Include="$(PayloadDirectory)/0Harmony.dll" LogicalName="SpotifyLocalBridge.Payload.0Harmony.dll" />
     <EmbeddedResource Include="$(PayloadDirectory)/System.Text.Json.dll" LogicalName="SpotifyLocalBridge.Payload.System.Text.Json.dll" />
     <EmbeddedResource Include="../spotify-local-bridge.js" LogicalName="SpotifyLocalBridge.Payload.spotify-local-bridge.js" />
-    <EmbeddedResource Include="../install.ps1" LogicalName="SpotifyLocalBridge.Payload.install.ps1" />
-    <EmbeddedResource Include="../uninstall.ps1" LogicalName="SpotifyLocalBridge.Payload.uninstall.ps1" />
   </ItemGroup>
 </Project>

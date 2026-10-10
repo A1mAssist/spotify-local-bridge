@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -21,7 +22,7 @@ internal static class Program
     private static readonly string[] PayloadFiles =
     [
         "StartupHook.dll", "StartupHook.deps.json", "0Harmony.dll", "System.Text.Json.dll",
-        "spotify-local-bridge.js", "install.ps1", "uninstall.ps1"
+        "spotify-local-bridge.js"
     ];
     private static readonly string SpotifyPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Spotify", "Spotify.exe");
@@ -146,8 +147,6 @@ internal static class Program
                         {
                             case 0:
                                 var install = !File.Exists(InstallManifest);
-                                var script = Path.Combine(RuntimeDirectory, install ? "install.ps1" : "uninstall.ps1");
-                                if (!File.Exists(script)) throw new InvalidOperationException($"Missing {Path.GetFileName(script)} beside the launcher.");
                                 if (install && (!File.Exists(HookPath) || !File.Exists(Path.Combine(RuntimeDirectory, "spotify-local-bridge.js"))))
                                     throw new InvalidOperationException("Bridge files are incomplete. Keep the full package beside the launcher.");
                                 string? archive = null;
@@ -171,7 +170,7 @@ internal static class Program
                                     message = install ? "Installation cancelled." : "Uninstallation cancelled.";
                                     break;
                                 }
-                                message = await ChangeInstallationAsync(install, exe, script, archive,
+                                message = await ChangeInstallationAsync(install, exe, archive,
                                     stage => ShowPrompt(new("UPDATING SPOTIFY", stage, "Please wait", "Working...")));
                                 pendingSince = null;
                                 break;
@@ -624,41 +623,141 @@ internal static class Program
         finally { foreach (var process in candidates) process.Dispose(); }
     }
 
-    private static async Task<string> ChangeInstallationAsync(bool install, string lyricifyExe, string script,
+    private static Task<string> ChangeInstallationAsync(bool install, string lyricifyExe,
         string? archive, Action<string> report)
     {
         if (install == File.Exists(InstallManifest))
-            return install ? "Spotify bridge is already installed." : "Spotify bridge is not installed.";
-        var action = install ? "install" : "uninstall";
+            return Task.FromResult(install ? "Spotify bridge is already installed." : "Spotify bridge is not installed.");
         report("Closing Spotify and Lyricify");
         StopApp(string.IsNullOrEmpty(lyricifyExe) ? "Lyricify for Spotify" : Path.GetFileNameWithoutExtension(lyricifyExe), lyricifyExe);
         StopApp("Spotify", SpotifyPath);
-        report($"Running {Path.GetFileName(script)}");
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo("powershell.exe")
+        report(install ? "Patching Spotify XPUI" : "Restoring original Spotify XPUI");
+        return Task.FromResult(install
+            ? InstallPatch(archive ?? throw new ArgumentException("Original xpui.spa archive not found."), report)
+            : UninstallPatch());
+    }
+
+    private static string InstallPatch(string archive, Action<string> report)
+    {
+        var apps = Path.Combine(Path.GetDirectoryName(SpotifyPath)!, "Apps");
+        if (!Directory.Exists(apps)) throw new InvalidOperationException($"Spotify Apps directory not found: {apps}");
+        archive = ValidateArchive(archive);
+        var live = Path.Combine(apps, "xpui");
+        if (File.Exists(Path.Combine(live, "spotify-local-bridge-install.json")))
+            throw new InvalidOperationException("The standalone bridge is already installed. Remove it before installing again.");
+        var backupRoot = Path.Combine(SettingsDirectory, "backups");
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture);
+        var stage = Path.Combine(apps, "xpui.local-bridge-stage-" + stamp);
+        var previous = Directory.Exists(live) ? Path.Combine(backupRoot, "xpui-before-" + stamp) : null;
+        var previousArchive = string.Equals(Path.GetFullPath(archive), Path.Combine(apps, "xpui.spa"), StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(backupRoot, "xpui-before-" + stamp + ".spa") : null;
+        var utf8 = new UTF8Encoding(false);
+        try
         {
-            WorkingDirectory = RuntimeDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script })
-            process.StartInfo.ArgumentList.Add(argument);
-        if (archive != null)
-        {
-            process.StartInfo.ArgumentList.Add("-XpuiArchive");
-            process.StartInfo.ArgumentList.Add(archive);
+            ZipFile.ExtractToDirectory(archive, stage);
+            var indexPath = Path.Combine(stage, "index.html");
+            var bundlePath = Path.Combine(stage, "xpui.js");
+            if (!File.Exists(indexPath) || !File.Exists(bundlePath))
+                throw new InvalidOperationException("The archive does not contain Spotify XPUI index.html and xpui.js.");
+            var index = File.ReadAllText(indexPath, utf8);
+            var bundle = File.ReadAllText(bundlePath, utf8);
+            if (index.Contains("spicetifyWrapper.js", StringComparison.Ordinal) || bundle.Contains("Spicetify._platform", StringComparison.Ordinal))
+                throw new InvalidOperationException("The supplied archive is already modified by Spicetify; provide an original xpui.spa.");
+            const string scriptTag = "<script defer=\"defer\" src=\"/xpui.js\"></script>";
+            if (Count(index, scriptTag) != 1) throw new InvalidOperationException("Spotify XPUI script tag changed; no files were installed.");
+            foreach (var (from, to) in new[]
+            {
+                ("i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),{version:n,container:e,operatingSystem:'",
+                 "i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),window.__spotifyLocalBridgeStart?.(i),{version:n,container:e,operatingSystem:'"),
+                ("u.registerFactory(ed.J,()=>new ep.Q),{version:n,container:e,operatingSystem:'",
+                 "u.registerFactory(ed.J,()=>new ep.Q),window.__spotifyLocalBridgeStart?.(u),{version:n,container:e,operatingSystem:'")
+            })
+            {
+                if (Count(bundle, from) != 1) throw new InvalidOperationException("Spotify XPUI bootstrap changed; no files were installed.");
+                bundle = bundle.Replace(from, to, StringComparison.Ordinal);
+            }
+            index = index.Replace(scriptTag, "<script defer=\"defer\" src=\"/spotify-local-bridge.js\"></script>" + scriptTag, StringComparison.Ordinal);
+            File.WriteAllText(indexPath, index, utf8);
+            File.WriteAllText(bundlePath, bundle, utf8);
+            File.Copy(Path.Combine(RuntimeDirectory, "spotify-local-bridge.js"), Path.Combine(stage, "spotify-local-bridge.js"));
+            File.WriteAllText(Path.Combine(stage, "spotify-local-bridge-install.json"), JsonSerializer.Serialize(
+                new { PreviousDirectory = previous, PreviousArchive = previousArchive }, new JsonSerializerOptions { WriteIndented = true }), utf8);
+            Directory.CreateDirectory(backupRoot);
+            if (previous != null) Directory.Move(live, previous);
+            if (previousArchive != null) File.Move(archive, previousArchive);
+            Directory.Move(stage, live);
+            return "Bridge installed. Start Spotify and Lyricify normally.";
         }
-        if (!process.Start()) throw new InvalidOperationException("PowerShell did not start.");
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var standardOutput = (await output).Trim();
-        var standardError = (await error).Trim();
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException($"Bridge {action} failed: {(standardError.Length > 0 ? standardError : standardOutput)}");
-        return install ? "Bridge installed. Start Spotify and Lyricify normally." : "Bridge uninstalled. Start Spotify normally.";
+        catch
+        {
+            if (!Directory.Exists(live) && previous != null && Directory.Exists(previous)) Directory.Move(previous, live);
+            if (!File.Exists(archive) && previousArchive != null && File.Exists(previousArchive)) File.Move(previousArchive, archive);
+            DeleteStage(stage, apps);
+            throw;
+        }
+    }
+
+    private static string UninstallPatch()
+    {
+        var apps = Path.Combine(Path.GetDirectoryName(SpotifyPath)!, "Apps");
+        var live = Path.Combine(apps, "xpui");
+        var manifestPath = Path.Combine(live, "spotify-local-bridge-install.json");
+        if (!File.Exists(manifestPath)) throw new InvalidOperationException("Standalone bridge installation not found.");
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var root = document.RootElement;
+        var previous = OptionalManifestPath(root, "PreviousDirectory");
+        var previousArchive = OptionalManifestPath(root, "PreviousArchive");
+        var backupRoot = Path.Combine(SettingsDirectory, "backups");
+        var legacyRoot = Path.Combine(apps, ".spotify-local-bridge-backups");
+        foreach (var path in new[] { previous, previousArchive }.Where(path => path != null))
+            if (!IsInside(path!, backupRoot) && !IsInside(path!, legacyRoot))
+                throw new InvalidOperationException($"Unexpected backup path in manifest: {path}");
+        if (previous != null && !Directory.Exists(previous))
+            throw new InvalidOperationException($"Previous XPUI backup is missing; leaving the installation intact.\n{previous}");
+        if (previousArchive != null && !File.Exists(previousArchive))
+            throw new InvalidOperationException($"Previous xpui.spa backup is missing; leaving the installation intact.\n{previousArchive}");
+        var archive = Path.Combine(apps, "xpui.spa");
+        if (previousArchive != null && File.Exists(archive))
+            throw new InvalidOperationException("Spotify created a new xpui.spa; leaving both it and the installation intact.");
+        var retired = Path.Combine(backupRoot, "xpui-standalone-retired-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
+        Directory.CreateDirectory(backupRoot);
+        Directory.Move(live, retired);
+        try
+        {
+            if (previous != null) Directory.Move(previous, live);
+            if (previousArchive != null) File.Move(previousArchive, archive);
+        }
+        catch
+        {
+            if (Directory.Exists(live) && previous != null && !Directory.Exists(previous)) Directory.Move(live, previous);
+            if (File.Exists(archive) && previousArchive != null && !File.Exists(previousArchive)) File.Move(archive, previousArchive);
+            if (Directory.Exists(retired) && !Directory.Exists(live)) Directory.Move(retired, live);
+            throw;
+        }
+        return "Bridge uninstalled. Start Spotify normally.";
+    }
+
+    private static string? OptionalManifestPath(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static int Count(string text, string value)
+    {
+        var count = 0;
+        for (var index = 0; (index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0; index += value.Length) count++;
+        return count;
+    }
+
+    private static bool IsInside(string path, string root)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void DeleteStage(string stage, string apps)
+    {
+        if (!Directory.Exists(stage) || !IsInside(stage, apps)) return;
+        Directory.Delete(stage, recursive: true);
     }
 
     private static string ValidateArchive(string input)
