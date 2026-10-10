@@ -6,7 +6,7 @@
 
 目前的补丁位置已针对 Spotify Desktop 1.2.89.539 和 Lyricify 4.4.0 检查。客户端更新后可能需要重新适配。项目源码采用 [MIT 许可证](LICENSE)，打包依赖的版权与许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
-当前 Release：`v0.1.3`。本版本继续转发当前曲目，并在 Spotify XPUI 暴露时补充曲目编号、专辑发行日期和专辑曲目数；安装器显式加载压缩组件，并统一由 `%LOCALAPPDATA%\SpotifyLocalBridge\backups\` 管理原始 XPUI 目录和归档。
+当前 Release：`v0.1.4`。本版本保留 `v0.1.3` 的曲目元数据转发，并将启动器改为小体积的 framework-dependent .NET 8 发布包；安装器显式加载压缩组件，并统一由 `%LOCALAPPDATA%\SpotifyLocalBridge\backups\` 管理原始 XPUI 目录和归档。
 
 ## 下载与使用
 
@@ -17,7 +17,7 @@
 
 TUI 的 `Now Playing` 只是这个本地接收服务的读取端，不会直接读取 Spotify。Spotify 的 XPUI 补丁把状态 POST 到 `/ingest`，而 `127.0.0.1:48711` 由 Lyricify 进程内的 .NET Hook 创建。Spotify 可以在 Lyricify 未启动时继续播放，但没有 Hook 就没有状态接收端，因此 TUI 的 `Now Playing` 没有内容可显示。必须通过插件快捷方式启动 Lyricify，TUI 和 Lyricify 的播放数据才会正常工作。
 
-EXE 已包含 .NET 8 运行时、Hook 及其依赖、Spotify XPUI 脚本和安装/卸载脚本，不需要另装 Node 或 Spicetify 运行环境。首次运行会把这些文件释放到 `%LOCALAPPDATA%\SpotifyLocalBridge\runtime\<构建标识>\`，供 Lyricify 和安装器加载。选定的 Lyricify 路径与 Hook 日志保存在 `%LOCALAPPDATA%\SpotifyLocalBridge\`。如果本机还有占用 48711 端口的旧版 Node 桥接服务，需先关闭它。
+EXE 包含 Hook 及其依赖、Spotify XPUI 脚本和安装/卸载脚本，但不捆绑 .NET 运行时，因此体积会小很多。首次运行前，请安装一次 [Windows x64 .NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)。如果 Windows 提示缺少所需框架，安装这个运行时后重新运行启动器即可。不需要另装 Node 或 Spicetify 运行环境。首次运行会把桥接文件释放到 `%LOCALAPPDATA%\SpotifyLocalBridge\runtime\<构建标识>\`，供 Lyricify 和安装器加载。选定的 Lyricify 路径与 Hook 日志保存在 `%LOCALAPPDATA%\SpotifyLocalBridge\`。如果本机还有占用 48711 端口的旧版 Node 桥接服务，需先关闭它。
 
 原始 Lyricify 快捷方式备份、选定的程序路径、日志及释放出的运行文件统一放在 `%LOCALAPPDATA%\SpotifyLocalBridge\`，与启动器 EXE 的位置无关。新安装的 Spotify XPUI 备份和卸载后保留的补丁目录放在其中的 `backups\` 子目录；旧版留在 Spotify `Apps\.spotify-local-bridge-backups\` 的备份仍可由卸载器恢复。用于识别当前补丁的小型安装清单仍随 Spotify XPUI 保存。移动启动器不会丢失这些数据，但需要在面板中选择 `Repair Lyricify shortcut`，把开始菜单快捷方式更新到新位置。
 
@@ -89,7 +89,7 @@ Spotify 若正在请求相同记录，脚本只对重复请求错误在三秒内
 
 ## 构建与验证
 
-在 Windows PowerShell 中运行 `.\package-single.ps1` 构建单文件版本；需要适配另一份 Lyricify 时，传入 `-SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'`。构建输出是 `dist\LyricifyLauncher.exe`，它作为 GitHub Release 附件发布，不纳入 Git 跟踪。Lyricify 加载 Hook 时仍需要磁盘上的 DLL，所以 EXE 会在运行时释放内嵌文件。
+在 Windows PowerShell 中运行 `.\package-single.ps1` 构建小体积的 framework-dependent 单文件版本；需要适配另一份 Lyricify 时，传入 `-SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'`。构建输出是 `dist\LyricifyLauncher.exe`，它作为 GitHub Release 附件发布，不纳入 Git 跟踪。构建不会把 .NET 8 运行时打进 EXE，目标机器必须先安装 Windows x64 Desktop Runtime。Lyricify 加载 Hook 时仍需要磁盘上的 DLL，所以 EXE 会在运行时释放内嵌桥接文件。
 
 可运行以下检查。打包脚本把最新 Hook 编译到独立暂存目录，因此检查命令显式使用该 DLL：
 

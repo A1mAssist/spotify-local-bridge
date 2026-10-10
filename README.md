@@ -6,7 +6,7 @@ This is an unofficial Windows x64 integration project unaffiliated with Spotify 
 
 The patch locations have been checked against Spotify Desktop 1.2.89.539 and Lyricify 4.4.0. Client updates may require changes. The project source is licensed under [MIT](LICENSE); see [third-party notices](THIRD_PARTY_NOTICES.md) for bundled dependencies.
 
-Current release: `v0.1.3`. This release continues to forward the current track and adds the track number, album release date, and album track count when Spotify XPUI exposes them. The installer explicitly loads its compression component, and the launcher manages original XPUI directories and archives under `%LOCALAPPDATA%\SpotifyLocalBridge\backups\`.
+Current release: `v0.1.4`. This release keeps the metadata forwarding from `v0.1.3` and changes the launcher to a small framework-dependent .NET 8 package. The installer explicitly loads its compression component, and the launcher manages original XPUI directories and archives under `%LOCALAPPDATA%\SpotifyLocalBridge\backups\`.
 
 ## Download and use
 
@@ -17,7 +17,7 @@ Current release: `v0.1.3`. This release continues to forward the current track a
 
 The TUI's `Now Playing` panel is a client of this local receiver; it does not read Spotify directly. Spotify's patched XPUI posts state to `/ingest`, while the .NET Hook inside Lyricify owns `127.0.0.1:48711`. Spotify can keep playing without Lyricify, but with no Hook there is no receiver, so `Now Playing` has no state to display. Lyricify must be started through the patched shortcut for the TUI and Lyricify playback data to work.
 
-The EXE includes the .NET 8 runtime, the Hook and its dependencies, the Spotify XPUI script, and the install/uninstall scripts. No separate Node or Spicetify runtime is needed. On first run, it extracts these files to `%LOCALAPPDATA%\SpotifyLocalBridge\runtime\<build-id>\` for Lyricify and the installer to load. The selected Lyricify path and Hook log are stored under `%LOCALAPPDATA%\SpotifyLocalBridge\`. Close any older Node bridge using port 48711 before launching.
+The EXE includes the Hook and its dependencies, the Spotify XPUI script, and the install/uninstall scripts. It is a small framework-dependent .NET 8 Windows executable; install the [.NET 8 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/download/dotnet/8.0) once before launching it. If Windows reports that the required framework is missing, install that runtime and run the launcher again. No separate Node or Spicetify runtime is needed. On first run, it extracts the bridge files to `%LOCALAPPDATA%\SpotifyLocalBridge\runtime\<build-id>\` for Lyricify and the installer to load. The selected Lyricify path and Hook log are stored under `%LOCALAPPDATA%\SpotifyLocalBridge\`. Close any older Node bridge using port 48711 before launching.
 
 The original Lyricify shortcut backup, selected application path, logs, and extracted runtime files all live under `%LOCALAPPDATA%\SpotifyLocalBridge\`, independent of the launcher's location. New Spotify XPUI backups and patched directories retained after removal go in its `backups\` subdirectory. The uninstaller also supports older backups under Spotify's `Apps\.spotify-local-bridge-backups\`. A small installation manifest stays with the patched Spotify XPUI to identify the current installation. Moving the launcher does not lose these files, but you must select `Repair Lyricify shortcut` in the panel to point the Start Menu shortcut to the new EXE location.
 
@@ -89,7 +89,7 @@ The table is based on the bundled SDK, [SpotifyAPI-NET's PlayerClient](https://g
 
 ## Build and verify
 
-Run `.\package-single.ps1` in Windows PowerShell to build the single-file release. To target a different Lyricify package, pass `-SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'`. The output is `dist\LyricifyLauncher.exe`, published as a GitHub Release asset rather than tracked in Git. Lyricify still needs the Hook DLL on disk while loading it, so the EXE extracts its embedded files at runtime.
+Run `.\package-single.ps1` in Windows PowerShell to build the small framework-dependent single-file release. To target a different Lyricify package, pass `-SpotifyApiDll 'C:\path\to\SpotifyAPI.Web.dll'`. The output is `dist\LyricifyLauncher.exe`, published as a GitHub Release asset rather than tracked in Git. The build deliberately does not bundle the .NET 8 runtime; the target machine must have the Windows x64 Desktop Runtime installed. Lyricify still needs the Hook DLL on disk while loading it, so the EXE extracts its embedded bridge files at runtime.
 
 The following checks are available. The packaging script compiles the latest Hook into a separate staging directory, so the commands explicitly use that DLL:
 
