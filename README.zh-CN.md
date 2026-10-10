@@ -13,6 +13,8 @@
 3. 之后从已修改的 Lyricify 开始菜单快捷方式启动。快捷方式通过启动器给 Lyricify 加载 Hook，启动器随即退出，不会打开管理面板。桌面和任务栏的其他快捷方式不会自动修改。
 4. 播放歌曲后访问 `http://127.0.0.1:48711/state`，正常情况下应返回 JSON。HTTP 204 表示暂时没有新鲜的播放状态。接收服务只在带 Hook 的 Lyricify 进程运行时存在。
 
+TUI 的 `Now Playing` 只是这个本地接收服务的读取端，不会直接读取 Spotify。Spotify 的 XPUI 补丁把状态 POST 到 `/ingest`，而 `127.0.0.1:48711` 由 Lyricify 进程内的 .NET Hook 创建。Spotify 可以在 Lyricify 未启动时继续播放，但没有 Hook 就没有状态接收端，因此 TUI 的 `Now Playing` 没有内容可显示。必须通过插件快捷方式启动 Lyricify，TUI 和 Lyricify 的播放数据才会正常工作。
+
 EXE 已包含 .NET 8 运行时、Hook 及其依赖、Spotify XPUI 脚本和安装/卸载脚本，不需要另装 Node 或 Spicetify 运行环境。首次运行会把这些文件释放到 `%LOCALAPPDATA%\SpotifyLocalBridge\runtime\<构建标识>\`，供 Lyricify 和安装器加载。选定的 Lyricify 路径与 Hook 日志保存在 `%LOCALAPPDATA%\SpotifyLocalBridge\`。如果本机还有占用 48711 端口的旧版 Node 桥接服务，需先关闭它。
 
 原始 Lyricify 快捷方式备份、选定的程序路径、日志及释放出的运行文件统一放在 `%LOCALAPPDATA%\SpotifyLocalBridge\`，与启动器 EXE 的位置无关。新安装的 Spotify XPUI 备份和卸载后保留的补丁目录放在其中的 `backups\` 子目录；旧版留在 Spotify `Apps\.spotify-local-bridge-backups\` 的备份仍可由卸载器恢复。用于识别当前补丁的小型安装清单仍随 Spotify XPUI 保存。移动启动器不会丢失这些数据，但需要在面板中选择 `Repair Lyricify shortcut`，把开始菜单快捷方式更新到新位置。
@@ -48,7 +50,7 @@ Lyricify 必须经插件快捷方式启动，Hook 才会加载；管理面板不
 
 ## 桥接范围
 
-Spotify XPUI 脚本读取客户端自身的 `PlayerAPI`、`PlaybackAPI` 和 `LibraryAPI`，把播放状态发往 `127.0.0.1:48711`，并接收本地控制命令。Lyricify 进程内的 .NET Startup Hook 提供该本地接收服务，用内存状态替换 `SpotifyAPI.Web.PlayerClient.GetCurrentPlayback` 的两个重载，并将暂停、继续、切歌、拖动进度、随机/循环、音量和当前歌曲的收藏操作转给 Spotify 客户端。当前歌曲、时间轴、播放模式、音量、红心状态以及队列预加载所需的已收藏查询均在覆盖范围内。无需浏览器包装器或 Windows 媒体会话参与播放状态采集。
+Spotify XPUI 脚本读取客户端自身的 `PlayerAPI`、`PlaybackAPI` 和 `LibraryAPI`，把播放状态发往 `127.0.0.1:48711`，并接收本地控制命令。Lyricify 进程内的 .NET Startup Hook 提供该本地接收服务，用内存状态替换 `SpotifyAPI.Web.PlayerClient.GetCurrentPlayback` 的两个重载，并将暂停、继续、切歌、拖动进度、随机/循环、音量和当前歌曲的收藏操作转给 Spotify 客户端。当前歌曲、时间轴、播放模式、音量、红心状态以及队列预加载所需的已收藏查询均在覆盖范围内。TUI 读取的是同一个接收服务，不是独立的 Spotify 读取器。无需浏览器包装器或 Windows 媒体会话参与播放状态采集。
 
 带 Hook 的进程会跳过 Lyricify 媒体会话增强及其定时器入口，因此保存的“媒体会话增强”“时间轴修正”和“时间轴修正 Plus”设置不会控制该进程的播放或时间轴。Plus 可能为刷新 Windows 时间轴而主动暂停、继续播放，所以桥接状态统一来自 Spotify XPUI。未带 Hook 启动的 Lyricify 仍按自身保存的设置运行。
 
