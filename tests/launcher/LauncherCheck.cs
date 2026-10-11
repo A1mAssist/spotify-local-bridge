@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
 
@@ -103,9 +104,9 @@ internal static class LauncherCheck
         Check(compactConfirm.Length == 12 && compactConfirm[5].Contains("ACTION REQUIRED: CONFIRM REMOVAL")
             && compactConfirm[9].Contains("Close Spotify and Lyricify") && compactConfirm[^1].Contains("Esc Cancel"),
             "A narrow terminal must keep the confirmation and cancel action visible.");
-        var archiveConfirm = Program.BuildPanel(79, 25, true, true, false, "Original", new(false), "", "", false, 0,
-            new("CONFIRM INSTALL", "Close Spotify and Lyricify", "Archive: C:\\Users\\Someone\\spicetify\\Backup\\xpui.spa", "Y Confirm    Esc Cancel", Confirmation: true));
-        Check(archiveConfirm[12].Contains("xpui.spa"), "The install confirmation must show the selected archive filename.");
+        var installConfirm = Program.BuildPanel(79, 25, true, true, false, "Original", new(false), "", "", false, 0,
+            new("CONFIRM INSTALL", "Close Spotify and Lyricify", "Install Spotify patch automatically", "Y Confirm    Esc Cancel", Confirmation: true));
+        Check(installConfirm[12].Contains("automatically"), "The install confirmation should describe the action without asking for a source path.");
         Check(Program.Tail("C:\\音乐\\👩‍🎤歌曲\\Lyricify.exe", 15).EndsWith("Lyricify.exe")
             && Program.CellWidth(Program.Tail("C:\\音乐\\👩‍🎤歌曲\\Lyricify.exe", 15)) <= 15,
             "Long pasted paths must show their filename without overflowing the panel.");
@@ -179,6 +180,7 @@ internal static class LauncherCheck
         File.Copy(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "PING.EXE"), testExe);
         try
         {
+            CheckXpuiManagement(Path.Combine(testDirectory, "xpui-check"));
             var shortcutPath = Path.Combine(testDirectory, "Lyricify 4.lnk");
             var backupPath = Path.Combine(testDirectory, "original.lnk");
             dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
@@ -225,6 +227,86 @@ internal static class LauncherCheck
         }
         finally { Directory.Delete(testDirectory, recursive: true); }
         Console.WriteLine("Launcher checks passed");
+    }
+
+    private static void CheckXpuiManagement(string root)
+    {
+        var apps = Path.Combine(root, "Apps");
+        var live = Path.Combine(apps, "xpui");
+        var backups = Path.Combine(root, "backups");
+        var spicetify = Path.Combine(root, "spicetify", "Backup");
+        var archive = Path.Combine(apps, "xpui.spa");
+        var fallback = Path.Combine(spicetify, "xpui.spa");
+        var script = Path.Combine(root, "spotify-local-bridge.js");
+        const string index = "<html><script defer=\"defer\" src=\"/xpui.js\"></script></html>";
+        const string bundle = "i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),{version:n,container:e,operatingSystem:x};" +
+            "u.registerFactory(ed.J,()=>new ep.Q),{version:n,container:e,operatingSystem:(0,sV.D)()};";
+        Directory.CreateDirectory(Path.Combine(live, "fonts"));
+        Directory.CreateDirectory(spicetify);
+        File.WriteAllText(Path.Combine(live, "index.html"), index);
+        File.WriteAllText(Path.Combine(live, "xpui.js"), bundle);
+        File.WriteAllText(Path.Combine(live, "fonts", "测试.woff2"), "asset bytes");
+        File.WriteAllText(script, "window.__spotifyLocalBridgeStart = () => {};");
+        ZipFile.CreateFromDirectory(live, fallback);
+        Check(Program.FindXpuiSource(apps, spicetify) == live,
+            "A compatible unpacked XPUI must be discovered without an archive or user-supplied path.");
+        Program.InstallPatch(live, apps, backups, script);
+        Check(File.ReadAllText(Path.Combine(live, "index.html")).Contains("spotify-local-bridge.js")
+            && File.ReadAllText(Path.Combine(live, "xpui.js")).Contains("window.__spotifyLocalBridgeStart?.(i)")
+            && File.ReadAllText(Path.Combine(live, "xpui.js")).Contains("window.__spotifyLocalBridgeStart?.(u)")
+            && File.ReadAllText(Path.Combine(live, "fonts", "测试.woff2")) == "asset bytes",
+            "Native directory installation must inject both bootstraps and preserve nested assets.");
+        Program.UninstallPatch(apps, backups);
+        Check(File.ReadAllText(Path.Combine(live, "index.html")) == index
+            && File.ReadAllText(Path.Combine(live, "xpui.js")) == bundle
+            && !File.Exists(Path.Combine(live, "spotify-local-bridge-install.json")),
+            "Native removal must restore the original unpacked XPUI exactly.");
+
+        File.WriteAllText(archive, "invalid archive bytes");
+        File.WriteAllText(Path.Combine(live, "index.html"), index + "<script src='spicetifyWrapper.js'></script>");
+        Check(Program.FindXpuiSource(apps, spicetify) == fallback,
+            "Discovery must skip a corrupt archive and a modified live XPUI in favor of the original backup.");
+        try { Program.InstallPatch(fallback, apps, backups, script + ".missing"); throw new Exception("Missing payload must fail."); }
+        catch (FileNotFoundException) { }
+        Check(File.ReadAllText(archive) == "invalid archive bytes"
+            && File.ReadAllText(Path.Combine(live, "index.html")).Contains("spicetifyWrapper.js")
+            && !Directory.EnumerateDirectories(apps, "xpui.local-bridge-stage-*").Any(),
+            "An installation failure must preserve both original inputs and clean its staging directory.");
+        Program.InstallPatch(fallback, apps, backups, script);
+        Check(!File.Exists(archive), "A live xpui.spa must be backed up even when installation uses a different source.");
+        var previous = Directory.GetDirectories(backups, "xpui-before-*").Single();
+        var manifest = Path.Combine(live, "spotify-local-bridge-install.json");
+        var originalManifest = File.ReadAllText(manifest);
+        File.WriteAllText(manifest, System.Text.Json.JsonSerializer.Serialize(new { PreviousDirectory = previous + ".missing",
+            PreviousArchive = Directory.GetFiles(backups, "xpui-before-*.spa").Single() }));
+        try { Program.UninstallPatch(apps, backups); throw new Exception("Removal must stop when its backup is missing."); }
+        catch (InvalidOperationException) { }
+        Check(File.Exists(Path.Combine(live, "spotify-local-bridge-install.json")),
+            "Missing backups must leave the installed patch intact.");
+        File.WriteAllText(manifest, originalManifest);
+        Program.UninstallPatch(apps, backups);
+        Check(File.ReadAllText(archive) == "invalid archive bytes"
+            && File.ReadAllText(Path.Combine(live, "index.html")).Contains("spicetifyWrapper.js"),
+            "Removal must restore both prior files when an external backup was selected.");
+        try { Program.FindXpuiSource(apps, spicetify + ".missing"); throw new Exception("Incompatible inputs must fail discovery."); }
+        catch (InvalidOperationException) { }
+        Check(File.ReadAllText(archive) == "invalid archive bytes", "Failed discovery must not modify Spotify.");
+
+        Directory.Delete(live, recursive: true);
+        File.Copy(fallback, archive, overwrite: true);
+        var originalArchive = File.ReadAllBytes(archive);
+        Check(Program.FindXpuiSource(apps, spicetify) == archive, "A native Spotify archive should be selected first.");
+        Program.InstallPatch(archive, apps, backups, script);
+        File.WriteAllText(archive, "new Spotify archive");
+        try { Program.UninstallPatch(apps, backups); throw new Exception("Removal must not overwrite a new Spotify archive."); }
+        catch (InvalidOperationException) { }
+        Check(File.ReadAllText(archive) == "new Spotify archive"
+            && File.Exists(Path.Combine(live, "spotify-local-bridge-install.json")),
+            "A conflicting new Spotify archive must leave both it and the patch intact.");
+        File.Delete(archive);
+        Program.UninstallPatch(apps, backups);
+        Check(!Directory.Exists(live) && File.ReadAllBytes(archive).SequenceEqual(originalArchive),
+            "Archive-only installation must restore the exact original archive on removal.");
     }
 
     private sealed class StubHandler : HttpMessageHandler

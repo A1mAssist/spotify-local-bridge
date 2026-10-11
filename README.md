@@ -6,11 +6,11 @@ This is an unofficial Windows x64 integration project unaffiliated with Spotify 
 
 The patch locations have been checked against Spotify Desktop 1.2.89.539 and Lyricify 4.4.0. Client updates may require changes. The project source is licensed under [MIT](LICENSE); see [third-party notices](THIRD_PARTY_NOTICES.md) for bundled dependencies.
 
-Current release: `v0.1.10`. This release keeps the small framework-dependent launcher, uses a consistent single-cell playback bar, requests the 640×640 Spotify CDN variant when XPUI supplies a smaller album image, and performs XPUI install/removal directly in the launcher without PowerShell. Activity errors keep visible separators and show the useful tail of long backup paths.
+Current release: `v0.1.11`. Installation automatically finds and validates Spotify's original XPUI archive, an unmodified unpacked XPUI directory, or Spicetify's original backup. Select `Install Spotify patch` and confirm with `Y`; no archive path input is required. XPUI installation and removal run directly inside the small framework-dependent launcher.
 
 ## Download and use
 
-1. Install the desktop version of Spotify from spotify.com and keep an original `Apps\xpui.spa`. If Spicetify previously modified Spotify, you can provide its backup of the original `xpui.spa` when the panel asks for it. The installer preserves the previous XPUI directory and checks the current bootstrap code before patching. Removal stops if Spotify has created a new `xpui.spa`, so it will not overwrite that file.
+1. Install the desktop version of Spotify from spotify.com. The launcher automatically checks Spotify's `Apps\xpui.spa`, its unmodified `Apps\xpui` directory, and the original `spicetify\Backup\xpui.spa`, selecting the first compatible source. The installer preserves the previous XPUI directory and any existing Spotify archive before changing files. If all sources are missing or incompatible, it stops and asks you to repair Spotify or update the bridge. Removal stops if Spotify has created a new `xpui.spa`, so it will not overwrite that file.
 2. Download `LyricifyLauncher.exe` from the [latest release](https://github.com/A1mAssist/spotify-local-bridge/releases/latest) and run it. In the panel, select `Install Spotify patch`, then `Enable Lyricify shortcut`. Once installed, those menu items change to the corresponding removal and restore actions. After confirmation, installing or removing the Spotify patch closes Spotify and Lyricify; save any unsaved work in either app first.
 3. From then on, start Lyricify through the modified Start Menu shortcut. It uses the launcher to load the Hook into Lyricify, after which the launcher exits without opening the management panel. Other desktop and taskbar shortcuts are not modified automatically.
 4. Play a track and visit `http://127.0.0.1:48711/state`. Normally it returns JSON. HTTP 204 means no recent playback state is available. The receiver runs only while a Hook-enabled Lyricify process is running.
@@ -34,7 +34,7 @@ The left side manages the Spotify patch, Lyricify shortcut, Lyricify application
 | Log view Up / Down, `PgUp` / `PgDn`, `Home` / `End` | Scroll the log |
 | Log view `R`, `Q` / `Esc` / `Enter` | Reload the log or return to the panel |
 
-The log view shortens timestamps and wraps long messages. For actions that require confirmation, press `Y` in the panel; any other key cancels. You can enter the Lyricify application path or a missing XPUI archive path in the panel. Management actions first request a normal client close and force-stop any client still running after two seconds.
+The log view shortens timestamps and wraps long messages. For actions that require confirmation, press `Y` in the panel; any other key cancels. The Lyricify path can be edited in the panel; the Spotify patch source is discovered automatically. Management actions first request a normal client close and force-stop any client still running after two seconds.
 
 `Enable Lyricify shortcut` backs up `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Lyricify\Lyricify 4.lnk` to `%LOCALAPPDATA%\SpotifyLocalBridge\Lyricify 4.original.lnk`, then points the shortcut to the launcher's `--launch-only` mode. `Restore Lyricify shortcut` restores the original while the shortcut is still managed by this project. After moving the EXE, run it from its new location and select `Repair Lyricify shortcut` to update the Start Menu link. If Lyricify is already running from an entry point without the Hook, exit it completely from the tray before using the modified shortcut.
 
