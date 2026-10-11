@@ -150,7 +150,8 @@ internal static class Program
                                 if (install && (!File.Exists(HookPath) || !File.Exists(Path.Combine(RuntimeDirectory, "spotify-local-bridge.js"))))
                                     throw new InvalidOperationException("Bridge files are incomplete. Keep the full package beside the launcher.");
                                 var source = install ? FindXpuiSource(Path.Combine(Path.GetDirectoryName(SpotifyPath)!, "Apps"),
-                                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "spicetify", "Backup")) : null;
+                                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "spicetify", "Backup"),
+                                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages")) : null;
                                 ShowPrompt(install
                                     ? new("CONFIRM INSTALL", "Close Spotify and Lyricify", "Install Spotify patch automatically", "Y Confirm    Esc Cancel", Confirmation: true)
                                     : new("CONFIRM REMOVAL", "Close Spotify and Lyricify", "Remove Spotify patch", "Y Confirm    Esc Cancel", Confirmation: true));
@@ -629,10 +630,16 @@ internal static class Program
             : UninstallPatch(apps, backupRoot));
     }
 
-    internal static string FindXpuiSource(string apps, string spicetifyBackup)
+    internal static string FindXpuiSource(string apps, string spicetifyBackup, string packagesRoot)
     {
-        foreach (var source in new[] { Path.Combine(apps, "xpui.spa"), Path.Combine(apps, "xpui"),
-            Path.Combine(spicetifyBackup, "xpui.spa") })
+        var sources = new List<string> { Path.Combine(apps, "xpui.spa"), Path.Combine(apps, "xpui"),
+            Path.Combine(spicetifyBackup, "xpui.spa") };
+        // MSIX tools can create Spicetify's backup in a private cache that normal desktop launches cannot see through APPDATA.
+        if (Directory.Exists(packagesRoot))
+            sources.AddRange(Directory.EnumerateDirectories(packagesRoot, "*", new EnumerationOptions
+                { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true })
+                .Select(package => Path.Combine(package, "LocalCache", "Roaming", "spicetify", "Backup", "xpui.spa")));
+        foreach (var source in sources)
         {
             if (!File.Exists(source) && !Directory.Exists(source)) continue;
             try

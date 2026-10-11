@@ -237,6 +237,7 @@ internal static class LauncherCheck
         var spicetify = Path.Combine(root, "spicetify", "Backup");
         var archive = Path.Combine(apps, "xpui.spa");
         var fallback = Path.Combine(spicetify, "xpui.spa");
+        var packages = Path.Combine(root, "Packages");
         var script = Path.Combine(root, "spotify-local-bridge.js");
         const string index = "<html><script defer=\"defer\" src=\"/xpui.js\"></script></html>";
         const string bundle = "i.registerFactory(nq.J,e=>new n$(new Z.XO(e.resolve(ff.VI)),e.resolve(uo.z))),{version:n,container:e,operatingSystem:x};" +
@@ -248,7 +249,7 @@ internal static class LauncherCheck
         File.WriteAllText(Path.Combine(live, "fonts", "测试.woff2"), "asset bytes");
         File.WriteAllText(script, "window.__spotifyLocalBridgeStart = () => {};");
         ZipFile.CreateFromDirectory(live, fallback);
-        Check(Program.FindXpuiSource(apps, spicetify) == live,
+        Check(Program.FindXpuiSource(apps, spicetify, packages) == live,
             "A compatible unpacked XPUI must be discovered without an archive or user-supplied path.");
         Program.InstallPatch(live, apps, backups, script);
         Check(File.ReadAllText(Path.Combine(live, "index.html")).Contains("spotify-local-bridge.js")
@@ -264,7 +265,7 @@ internal static class LauncherCheck
 
         File.WriteAllText(archive, "invalid archive bytes");
         File.WriteAllText(Path.Combine(live, "index.html"), index + "<script src='spicetifyWrapper.js'></script>");
-        Check(Program.FindXpuiSource(apps, spicetify) == fallback,
+        Check(Program.FindXpuiSource(apps, spicetify, packages) == fallback,
             "Discovery must skip a corrupt archive and a modified live XPUI in favor of the original backup.");
         try { Program.InstallPatch(fallback, apps, backups, script + ".missing"); throw new Exception("Missing payload must fail."); }
         catch (FileNotFoundException) { }
@@ -288,14 +289,23 @@ internal static class LauncherCheck
         Check(File.ReadAllText(archive) == "invalid archive bytes"
             && File.ReadAllText(Path.Combine(live, "index.html")).Contains("spicetifyWrapper.js"),
             "Removal must restore both prior files when an external backup was selected.");
-        try { Program.FindXpuiSource(apps, spicetify + ".missing"); throw new Exception("Incompatible inputs must fail discovery."); }
+        try { Program.FindXpuiSource(apps, spicetify + ".missing", packages); throw new Exception("Incompatible inputs must fail discovery."); }
         catch (InvalidOperationException) { }
         Check(File.ReadAllText(archive) == "invalid archive bytes", "Failed discovery must not modify Spotify.");
+
+        var packageBackup = Path.Combine(packages, "Example.Tool_abc", "LocalCache", "Roaming", "spicetify", "Backup", "xpui.spa");
+        Directory.CreateDirectory(Path.GetDirectoryName(packageBackup)!);
+        File.Copy(fallback, packageBackup);
+        Check(Program.FindXpuiSource(apps, spicetify + ".missing", packages) == packageBackup,
+            "Desktop launches must find a compatible original backup stored in an MSIX tool's physical app cache.");
+        File.WriteAllText(packageBackup, "corrupt cached archive");
+        try { Program.FindXpuiSource(apps, spicetify + ".missing", packages); throw new Exception("Corrupt cached inputs must fail discovery."); }
+        catch (InvalidOperationException) { }
 
         Directory.Delete(live, recursive: true);
         File.Copy(fallback, archive, overwrite: true);
         var originalArchive = File.ReadAllBytes(archive);
-        Check(Program.FindXpuiSource(apps, spicetify) == archive, "A native Spotify archive should be selected first.");
+        Check(Program.FindXpuiSource(apps, spicetify, packages) == archive, "A native Spotify archive should be selected first.");
         Program.InstallPatch(archive, apps, backups, script);
         File.WriteAllText(archive, "new Spotify archive");
         try { Program.UninstallPatch(apps, backups); throw new Exception("Removal must not overwrite a new Spotify archive."); }

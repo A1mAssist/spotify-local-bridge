@@ -6,11 +6,11 @@
 
 目前的补丁位置已针对 Spotify Desktop 1.2.89.539 和 Lyricify 4.4.0 检查。客户端更新后可能需要重新适配。项目源码采用 [MIT 许可证](LICENSE)，打包依赖的版权与许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
-当前 Release：`v0.1.11`。安装会自动查找并校验 Spotify 的原始 XPUI 归档、未修改的已解压 XPUI 目录或 Spicetify 原始备份。选择 `Install Spotify patch` 后按 `Y` 确认即可，无需输入归档路径。XPUI 安装和移除由小体积的 framework-dependent 启动器本体执行。
+当前 Release：`v0.1.12`。安装会自动查找并校验 Spotify 的原始 XPUI 归档、未修改的已解压 XPUI 目录或 Spicetify 原始备份，也能识别 Windows 应用私有缓存中的备份。选择 `Install Spotify patch` 后按 `Y` 确认即可，无需输入归档路径。XPUI 安装和移除由小体积的 framework-dependent 启动器本体执行。
 
 ## 下载与使用
 
-1. 安装来自 spotify.com 的桌面版 Spotify。程序会自动检查 Spotify 的 `Apps\xpui.spa`、未修改的 `Apps\xpui` 目录，以及原始 `spicetify\Backup\xpui.spa`，选择第一个通过兼容性校验的来源。修改前会保留原来的 XPUI 目录和已有 Spotify 归档。若所有来源均缺失或不兼容，会停止操作并提示修复 Spotify 或更新桥接程序；卸载时若 Spotify 又生成了新的 `xpui.spa`，安装器会停止操作，避免覆盖该文件。
+1. 安装来自 spotify.com 的桌面版 Spotify。程序会自动检查 Spotify 的 `Apps\xpui.spa`、未修改的 `Apps\xpui` 目录，以及原始 `spicetify\Backup\xpui.spa`，选择第一个通过兼容性校验的来源。从资源管理器正常启动时，也会自动识别工具在 Windows 应用私有缓存中创建的备份。修改前会保留原来的 XPUI 目录和已有 Spotify 归档。若所有来源均缺失或不兼容，会停止操作并提示修复 Spotify 或更新桥接程序；卸载时若 Spotify 又生成了新的 `xpui.spa`，安装器会停止操作，避免覆盖该文件。
 2. 从[最新 Release](https://github.com/A1mAssist/spotify-local-bridge/releases/latest)下载 `LyricifyLauncher.exe` 并运行。在面板里选择 `Install Spotify patch`，然后选择 `Enable Lyricify shortcut`。已安装时，菜单会改为对应的移除或恢复操作。安装和移除 Spotify 补丁会在确认后关闭 Spotify 与 Lyricify；请先保存两款软件中的未保存内容。
 3. 之后从已修改的 Lyricify 开始菜单快捷方式启动。快捷方式通过启动器给 Lyricify 加载 Hook，启动器随即退出，不会打开管理面板。桌面和任务栏的其他快捷方式不会自动修改。
 4. 播放歌曲后访问 `http://127.0.0.1:48711/state`，正常情况下应返回 JSON。HTTP 204 表示暂时没有新鲜的播放状态。接收服务只在带 Hook 的 Lyricify 进程运行时存在。
